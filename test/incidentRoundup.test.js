@@ -175,6 +175,23 @@ test('bus roundup text uses #route framing and "buses missing"', () => {
   assert.ok(text.includes('appear stuck in place') || text.includes('service gap forming'));
 });
 
+test('buildRoundupText: ghost dedup picks the worst direction, not first-seen', () => {
+  // #151 Sheridan had NB at 5/8 (63%) and SB at 3/9 (31%); pre-fix the
+  // roundup picked SB and underreported the actual story.
+  const text = buildRoundupText({
+    kind: 'bus',
+    line: '151',
+    name: 'Sheridan',
+    signals: [
+      // SB first in array — would have won the old "first-seen" dedup.
+      { source: 'ghost', severity: 1.0, detail: JSON.stringify({ missing: 3, expected: 9 }) },
+      { source: 'ghost', severity: 1.0, detail: JSON.stringify({ missing: 5, expected: 8 }) },
+    ],
+  });
+  assert.ok(text.includes('5 of 8 buses missing'), `expected NB headline, got:\n${text}`);
+  assert.ok(!text.includes('3 of 9'), `should not show the less-severe SB number, got:\n${text}`);
+});
+
 test('describeSignal handles unknown source gracefully', () => {
   const text = describeSignal({ source: 'unknown', severity: 0.5, detail: null }, 'train');
   assert.ok(text.includes('unknown'));

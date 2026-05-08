@@ -124,16 +124,36 @@ function describeSignal(s, kind) {
   return `· ${s.source}`;
 }
 
+// For dedup, "worst" is source-specific. Ghost severity is capped at 1.0 once
+// posted, so picking by `severity` alone treats NB and SB as a tie and picks
+// whichever sorted first — that's how we ended up reporting 3/9 SB on #151
+// when 5/8 NB was the actual story. For ghost we re-derive the missing/
+// expected ratio from `detail`; for other sources the stored severity is
+// already proportional to the underlying metric.
+function severityFor(s) {
+  if (s.source === 'ghost') {
+    try {
+      const d = s.detail ? JSON.parse(s.detail) : {};
+      const missing = Number(d.missing);
+      const expected = Number(d.expected);
+      if (Number.isFinite(missing) && expected > 0) return missing / expected;
+    } catch (_e) {}
+    return 0;
+  }
+  return Number.isFinite(s.severity) ? s.severity : 0;
+}
+
 function buildRoundupText({ kind, line, name, signals }) {
   const label = kind === 'bus' ? `#${line} ${name || line}` : `${lineLabel(line)} Line`;
   const prefix = kind === 'bus' ? '🚌⚠️' : '🚇⚠️';
-  const seen = new Set();
-  const bullets = [];
+  // One bullet per source, picking the most severe instance per source so a
+  // less-affected direction can't shadow a worse one.
+  const bestBySource = new Map();
   for (const s of signals) {
-    if (seen.has(s.source)) continue;
-    seen.add(s.source);
-    bullets.push(describeSignal(s, kind));
+    const cur = bestBySource.get(s.source);
+    if (!cur || severityFor(s) > severityFor(cur)) bestBySource.set(s.source, s);
   }
+  const bullets = [...bestBySource.values()].map((s) => describeSignal(s, kind));
   const multi = bullets.length > 1;
   const header = `${prefix} ${label} · ${multi ? 'multiple signals' : 'signal'}`;
   const footer = multi
@@ -148,6 +168,18 @@ async function processKind({ kind, identifiers, getName, agentGetter, now }) {
     if (signals.length === 0) continue;
     const { total, bySource, ghostOverride } = scoreSignals(signals);
     const label = kind === 'bus' ? `bus/${id}` : lineLabel(id);
+    // If a ghost-override standalone post already went out on this route in
+    // the window, the roundup would just duplicate it — usually with a less-
+    // severe headline number, since ghost meta_signals fan out per direction
+    // and the roundup picks one source-bullet. Better to stay silent and let
+    // the ghost post own the thread.
+    const ghostOverrideAlreadyPosted = signals.some(
+      (s) => s.source === 'ghost' && s.posted === 1 && ghostOverrideQualifies(s),
+    );
+    if (ghostOverrideAlreadyPosted) {
+      console.log(`roundup: ${label} suppressed — ghost-override standalone already posted`);
+      continue;
+    }
     if (total < SCORE_THRESHOLD && !ghostOverride) {
       console.log(
         `roundup: ${label} score=${total.toFixed(2)} sources=${[...bySource.keys()].join(',')} below threshold`,
