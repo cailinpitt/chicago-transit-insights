@@ -113,7 +113,7 @@ async function fetchLoopInsetBase(view, lineColors, trainLines) {
   const frameSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="${view.width}" height="${view.height}">
     <rect x="2" y="2" width="${view.width - 4}" height="${view.height - 4}" fill="none" stroke="#fff" stroke-width="4"/>
     <rect x="10" y="10" width="104" height="32" fill="#000" fill-opacity="0.8" rx="3"/>
-    <text x="62" y="32" fill="#fff" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="18" font-weight="600">The Loop</text>
+    <text x="62" y="32" fill="#fff" text-anchor="middle" font-family="Inter, Helvetica, Arial, sans-serif" font-size="18" font-weight="600">The Loop</text>
   </svg>`;
   return sharp(data)
     .resize(view.width, view.height)
@@ -255,7 +255,7 @@ async function renderLoopInset(trains, lineColors, trainLines) {
   const frameSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="${LOOP_INSET_SIZE}" height="${LOOP_INSET_SIZE}">
     <rect x="2" y="2" width="${LOOP_INSET_SIZE - 4}" height="${LOOP_INSET_SIZE - 4}" fill="none" stroke="#fff" stroke-width="4"/>
     <rect x="10" y="10" width="104" height="32" fill="#000" fill-opacity="0.8" rx="3"/>
-    <text x="62" y="32" fill="#fff" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="18" font-weight="600">The Loop</text>
+    <text x="62" y="32" fill="#fff" text-anchor="middle" font-family="Inter, Helvetica, Arial, sans-serif" font-size="18" font-weight="600">The Loop</text>
   </svg>`;
 
   return sharp(data)

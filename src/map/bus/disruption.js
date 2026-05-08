@@ -100,7 +100,7 @@ async function renderBusDisruption({ routes, getKnownPidsForRoute, loadPattern, 
   );
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${WIDTH}" height="${HEIGHT}">
     <rect x="24" y="24" width="${titleWidth}" height="88" fill="#000" fill-opacity="0.78" rx="10"/>
-    <text x="48" y="84" fill="#fff" font-family="Helvetica, Arial, sans-serif" font-size="${titleFontSize}" font-weight="700">${xmlEscape(titleText)}</text>
+    <text x="48" y="84" fill="#fff" font-family="Inter, Helvetica, Arial, sans-serif" font-size="${titleFontSize}" font-weight="700">${xmlEscape(titleText)}</text>
   </svg>`;
 
   return sharp(baseMap)
@@ -289,7 +289,7 @@ async function renderBusDisruptionRich({ route, pattern, focusZone, title, mode 
 
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${WIDTH}" height="${HEIGHT}">
     <rect x="24" y="24" width="${titleWidth}" height="88" fill="#000" fill-opacity="0.82" rx="10"/>
-    <text x="48" y="84" fill="#fff" font-family="Helvetica, Arial, sans-serif" font-size="${titleFontSize}" font-weight="700">${xmlEscape(titleText)}</text>
+    <text x="48" y="84" fill="#fff" font-family="Inter, Helvetica, Arial, sans-serif" font-size="${titleFontSize}" font-weight="700">${xmlEscape(titleText)}</text>
     ${labels}
   </svg>`;
 

@@ -95,7 +95,7 @@ function renderClusters(clusters) {
     const fontSize = Math.max(12, Math.round(c.r * 0.9));
     return [
       `<circle cx="${c.x.toFixed(1)}" cy="${c.y.toFixed(1)}" r="${c.r}" fill="${CIRCLE_COLOR}" fill-opacity="0.55" stroke="${CIRCLE_STROKE}" stroke-width="2"/>`,
-      `<text x="${c.x.toFixed(1)}" y="${(c.y + fontSize / 3).toFixed(1)}" fill="#fff" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="${fontSize}" font-weight="700" stroke="#000" stroke-width="2" paint-order="stroke">${c.count}</text>`,
+      `<text x="${c.x.toFixed(1)}" y="${(c.y + fontSize / 3).toFixed(1)}" fill="#fff" text-anchor="middle" font-family="Inter, Helvetica, Arial, sans-serif" font-size="${fontSize}" font-weight="700" stroke="#000" stroke-width="2" paint-order="stroke">${c.count}</text>`,
     ].join('');
   });
 }
@@ -134,14 +134,14 @@ function buildLegend(maxCount) {
     const dotCx = cx + r;
     dots.push(
       `<circle cx="${dotCx}" cy="${cy}" r="${r}" fill="${CIRCLE_COLOR}" fill-opacity="0.55" stroke="${CIRCLE_STROKE}" stroke-width="2"/>`,
-      `<text x="${dotCx}" y="${cy + 5}" fill="#fff" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="700" stroke="#000" stroke-width="2" paint-order="stroke">${samples[i]}</text>`,
+      `<text x="${dotCx}" y="${cy + 5}" fill="#fff" text-anchor="middle" font-family="Inter, Helvetica, Arial, sans-serif" font-size="13" font-weight="700" stroke="#000" stroke-width="2" paint-order="stroke">${samples[i]}</text>`,
     );
     cx += 2 * r + gap;
   }
 
   const svg = `
     <rect x="0" y="0" width="${width}" height="${height}" rx="6" fill="#000" fill-opacity="0.7" stroke="#fff" stroke-width="1"/>
-    <text x="${width / 2}" y="${padY + 14}" fill="#fff" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="600">Events per hotspot</text>
+    <text x="${width / 2}" y="${padY + 14}" fill="#fff" text-anchor="middle" font-family="Inter, Helvetica, Arial, sans-serif" font-size="13" font-weight="600">Events per hotspot</text>
     ${dots.join('\n')}`;
   return { svg, width, height };
 }
@@ -205,7 +205,7 @@ async function renderLoopInset({ points, kind, trainLines, lineColors }) {
     ${renderClusters(clusters).join('\n')}
     <rect x="2" y="2" width="${LOOP_INSET_SIZE - 4}" height="${LOOP_INSET_SIZE - 4}" fill="none" stroke="#fff" stroke-width="4"/>
     <rect x="10" y="10" width="120" height="32" fill="#000" fill-opacity="0.8" rx="3"/>
-    <text x="70" y="32" fill="#fff" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="18" font-weight="600">Downtown</text>
+    <text x="70" y="32" fill="#fff" text-anchor="middle" font-family="Inter, Helvetica, Arial, sans-serif" font-size="18" font-weight="600">Downtown</text>
   </svg>`;
 
   return sharp(baseMap)

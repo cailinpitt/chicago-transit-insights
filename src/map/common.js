@@ -194,7 +194,7 @@ async function buildGhostLegend(x, y) {
   return [
     `<rect x="${x}" y="${y}" width="${boxW}" height="${boxH}" rx="6" fill="#000" fill-opacity="0.7"/>`,
     `<circle cx="${x + padX + discR}" cy="${cy}" r="${discR}" fill="#888888" stroke="#fff" stroke-width="3" stroke-dasharray="6 4" opacity="0.85"/>`,
-    `<text x="${x + padX + discR * 2 + 8}" y="${cy + fontSize / 2 - 3}" fill="#fff" font-family="Helvetica, Arial, sans-serif" font-size="${fontSize}" font-weight="600">${text}</text>`,
+    `<text x="${x + padX + discR * 2 + 8}" y="${cy + fontSize / 2 - 3}" fill="#fff" font-family="Inter, Helvetica, Arial, sans-serif" font-size="${fontSize}" font-weight="600">${text}</text>`,
   ].join('');
 }
 
@@ -429,7 +429,7 @@ async function fitTitlePill(text, baseFontSize, maxPillWidth, { padding = 48 } =
 // either clipping or trailing dead space. Always use this for pill sizing.
 async function measureTextWidth(text, fontSize, { bold = false } = {}) {
   const weight = bold ? 'bold' : 'normal';
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="4000" height="${Math.ceil(fontSize * 2)}"><text x="0" y="${fontSize}" font-family="Helvetica, Arial, sans-serif" font-size="${fontSize}" font-weight="${weight}">${xmlEscape(text)}</text></svg>`;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="4000" height="${Math.ceil(fontSize * 2)}"><text x="0" y="${fontSize}" font-family="Inter, Helvetica, Arial, sans-serif" font-size="${fontSize}" font-weight="${weight}">${xmlEscape(text)}</text></svg>`;
   const { data, info } = await sharp(Buffer.from(svg)).raw().toBuffer({ resolveWithObject: true });
   let maxX = 0;
   const stride = info.channels;

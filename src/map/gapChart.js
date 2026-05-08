@@ -57,17 +57,17 @@ function renderGapChart({
       const countX = barX + w + 16;
       const barRadius = Math.min(10, rowHeight / 2);
       return [
-        `<text x="${barX - 16}" y="${labelY}" fill="${TEXT}" text-anchor="end" font-family="Helvetica, Arial, sans-serif" font-size="30" font-weight="600">${xmlEscape(labelText)}</text>`,
+        `<text x="${barX - 16}" y="${labelY}" fill="${TEXT}" text-anchor="end" font-family="Inter, Helvetica, Arial, sans-serif" font-size="30" font-weight="600">${xmlEscape(labelText)}</text>`,
         `<rect x="${barX}" y="${y}" width="${w}" height="${rowHeight}" rx="${barRadius}" fill="${color}"/>`,
-        `<text x="${countX}" y="${labelY}" fill="${TEXT}" text-anchor="start" font-family="Helvetica, Arial, sans-serif" font-size="28" font-weight="700">${e.count}</text>`,
+        `<text x="${countX}" y="${labelY}" fill="${TEXT}" text-anchor="start" font-family="Inter, Helvetica, Arial, sans-serif" font-size="28" font-weight="700">${e.count}</text>`,
       ].join('');
     })
     .join('\n');
 
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${SIZE}" height="${SIZE}">
     <rect width="${SIZE}" height="${SIZE}" fill="${BG}"/>
-    <text x="${PAD_X}" y="${PAD_TOP + TITLE_SIZE}" fill="${TEXT}" font-family="Helvetica, Arial, sans-serif" font-size="${TITLE_SIZE}" font-weight="700">${xmlEscape(title)}</text>
-    <text x="${PAD_X}" y="${PAD_TOP + TITLE_SIZE + 20 + SUBTITLE_SIZE}" fill="${SUBTEXT}" font-family="Helvetica, Arial, sans-serif" font-size="${SUBTITLE_SIZE}" font-weight="500">${xmlEscape(subtitle)}</text>
+    <text x="${PAD_X}" y="${PAD_TOP + TITLE_SIZE}" fill="${TEXT}" font-family="Inter, Helvetica, Arial, sans-serif" font-size="${TITLE_SIZE}" font-weight="700">${xmlEscape(title)}</text>
+    <text x="${PAD_X}" y="${PAD_TOP + TITLE_SIZE + 20 + SUBTITLE_SIZE}" fill="${SUBTEXT}" font-family="Inter, Helvetica, Arial, sans-serif" font-size="${SUBTITLE_SIZE}" font-weight="500">${xmlEscape(subtitle)}</text>
     <line x1="${barX}" y1="${chartTop - 10}" x2="${barX}" y2="${chartBottom + 10}" stroke="${GRID}" stroke-width="2"/>
     ${bars}
   </svg>`;

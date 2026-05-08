@@ -370,7 +370,7 @@ function buildTrainOverlaySvg(
     const textY = rectY + fontSize + 2;
     return `
     <rect x="${rectX}" y="${rectY}" width="${approxWidth}" height="${labelHeight}" fill="#000" fill-opacity="0.8" rx="3"/>
-    <text x="${textX}" y="${textY}" fill="#fff" text-anchor="${anchor}" font-family="Helvetica, Arial, sans-serif" font-size="${fontSize}" font-weight="600">${label}</text>`;
+    <text x="${textX}" y="${textY}" fill="#fff" text-anchor="${anchor}" font-family="Inter, Helvetica, Arial, sans-serif" font-size="${fontSize}" font-weight="600">${label}</text>`;
   });
 
   // Origin (house) and destination (flag) markers — draw below trains so a
