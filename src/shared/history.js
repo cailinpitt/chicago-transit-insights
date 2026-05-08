@@ -139,6 +139,7 @@ function db() {
       thread_root_uri TEXT NOT NULL,
       source_post_uri TEXT NOT NULL,
       quote_post_uri TEXT,
+      quote_post_cid TEXT,
       ts INTEGER NOT NULL,
       PRIMARY KEY (thread_root_uri, source_post_uri)
     );
@@ -296,6 +297,13 @@ function db() {
   }
   if (!roundupCols.includes('signals')) {
     _db.exec('ALTER TABLE roundup_anchors ADD COLUMN signals TEXT');
+  }
+  const threadQuoteCols = _db
+    .prepare('PRAGMA table_info(thread_quote_posts)')
+    .all()
+    .map((c) => c.name);
+  if (!threadQuoteCols.includes('quote_post_cid')) {
+    _db.exec('ALTER TABLE thread_quote_posts ADD COLUMN quote_post_cid TEXT');
   }
   // One-time cleanup of stale `branch-N` direction keys from before the
   // stable-direction-key change. Gated on user_version so this runs exactly
@@ -490,11 +498,14 @@ function recordRoundupAnchor({
 }
 
 function listActiveRoundupAnchors(kind, now = Date.now()) {
+  // resolved_ts IS NULL: once a roundup has posted its resolution, it's no
+  // longer a valid anchor for related-quote attachments. Without this filter,
+  // observations could land on the thread after "back to normal" was posted.
   return db()
     .prepare(`
       SELECT line, post_uri, post_cid, ts
       FROM roundup_anchors
-      WHERE kind = ? AND expires_ts > ?
+      WHERE kind = ? AND expires_ts > ? AND resolved_ts IS NULL
     `)
     .all(kind, now);
 }
@@ -1255,14 +1266,17 @@ function recentDetectorActivity({ kind, line, withinMs }, now = Date.now()) {
   return { gaps, pulses, alerts };
 }
 
-function recordThreadQuote({ threadRootUri, sourcePostUri, quotePostUri }, now = Date.now()) {
+function recordThreadQuote(
+  { threadRootUri, sourcePostUri, quotePostUri, quotePostCid },
+  now = Date.now(),
+) {
   db()
     .prepare(`
     INSERT OR REPLACE INTO thread_quote_posts
-      (thread_root_uri, source_post_uri, quote_post_uri, ts)
-    VALUES (?, ?, ?, ?)
+      (thread_root_uri, source_post_uri, quote_post_uri, quote_post_cid, ts)
+    VALUES (?, ?, ?, ?, ?)
   `)
-    .run(threadRootUri, sourcePostUri, quotePostUri || null, now);
+    .run(threadRootUri, sourcePostUri, quotePostUri || null, quotePostCid || null, now);
 }
 
 function getThreadQuotedSourceUris(threadRootUri) {
@@ -1270,6 +1284,21 @@ function getThreadQuotedSourceUris(threadRootUri) {
     .prepare('SELECT source_post_uri FROM thread_quote_posts WHERE thread_root_uri = ?')
     .all(threadRootUri);
   return new Set(rows.map((r) => r.source_post_uri));
+}
+
+// Latest quote post we've authored under this thread root. The next quote
+// replies to this so the thread stays linear (one reply per post) instead of
+// branching off the anchor.
+function getLatestThreadQuote(threadRootUri) {
+  const row = db()
+    .prepare(`
+      SELECT quote_post_uri, quote_post_cid FROM thread_quote_posts
+      WHERE thread_root_uri = ? AND quote_post_uri IS NOT NULL
+      ORDER BY ts DESC LIMIT 1
+    `)
+    .get(threadRootUri);
+  if (!row || !row.quote_post_cid) return null;
+  return { uri: row.quote_post_uri, cid: row.quote_post_cid };
 }
 
 function findRelatedAnalyticsPosts({ kind, routes, sinceTs, untilTs, excludeSourceUris }) {
@@ -1403,5 +1432,6 @@ module.exports = {
   recentDetectorActivity,
   recordThreadQuote,
   getThreadQuotedSourceUris,
+  getLatestThreadQuote,
   findRelatedAnalyticsPosts,
 };

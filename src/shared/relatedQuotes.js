@@ -21,6 +21,7 @@ const {
   findRelatedAnalyticsPosts,
   recordThreadQuote,
   getThreadQuotedSourceUris,
+  getLatestThreadQuote,
 } = require('./history');
 const { getPostRecord, postQuote } = require('./bluesky');
 const { isStationOnSegment, compassToTrDr, normalizePulseDirection } = require('./trainSegment');
@@ -179,6 +180,16 @@ async function buildWorkItems({ kind, agent, now }) {
     if (anchor.busHeldSegment) g.busHeldSegments.push(anchor.busHeldSegment);
     if (anchor.busAlertSegment) g.busAlertSegments.push(anchor.busAlertSegment);
     if (anchor.routeOnlyMatch) for (const r of anchor.routes) g.routeOnlyRoutes.add(String(r));
+  }
+  // Re-anchor `latestPost*` to the most recent quote we've authored in the
+  // thread (if any), so the next quote replies to it rather than to the
+  // group's anchor post — keeping the thread linear instead of branching.
+  for (const g of groups.values()) {
+    const last = getLatestThreadQuote(g.rootUri);
+    if (last) {
+      g.latestPostUri = last.uri;
+      g.latestPostCid = last.cid;
+    }
   }
   return [...groups.values()];
 }
@@ -363,6 +374,7 @@ async function processGroup({
         threadRootUri: group.rootUri,
         sourcePostUri: cand.post_uri,
         quotePostUri: result.uri,
+        quotePostCid: result.cid,
       });
       postedThisTick.add(cand.post_uri);
       // The quote post itself replies to latestPost — it now becomes the new

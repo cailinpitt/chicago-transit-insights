@@ -233,6 +233,105 @@ test('bus: expired roundup anchor is skipped', async () => {
   }
 });
 
+test('bus: resolved roundup anchor is skipped (no quote-attach after resolution)', async () => {
+  const { history, sweepMod, cleanup } = loadWithFreshDb();
+  try {
+    const ROUNDUP_URI = 'at://did:plc:alerts/app.bsky.feed.post/roundup-resolved';
+    const now = Date.now();
+    history.recordRoundupAnchor({
+      kind: 'bus',
+      line: '66',
+      postUri: ROUNDUP_URI,
+      postCid: 'cid-r',
+      ts: now - 27 * 60 * 1000,
+    });
+    // Mark resolved — sweep should treat this thread as closed.
+    const row = history
+      .getDb()
+      .prepare('SELECT id FROM roundup_anchors WHERE post_uri = ?')
+      .get(ROUNDUP_URI);
+    history.markRoundupResolved(row.id, 'at://did:plc:alerts/app.bsky.feed.post/resolution', now);
+
+    history
+      .getDb()
+      .prepare(`
+        INSERT INTO bunching_events
+          (ts, kind, route, direction, vehicle_count, severity_ft, near_stop, posted, post_uri)
+        VALUES (?, 'bus', '66', 'pid-x', 7, 1584, 'Grand & Union', 1, ?)
+      `)
+      .run(now, 'at://did:plc:bus/app.bsky.feed.post/bunch-late');
+    const agent = buildMockAgent({ records: {} });
+    const out = await sweepMod.sweepRelatedQuotes({ kind: 'bus', agent, now });
+    assert.equal(out.posted, 0);
+    assert.equal(out.groups, 0);
+  } finally {
+    cleanup();
+  }
+});
+
+test('linear thread: second quote replies to the first quote, not the anchor', async () => {
+  const { history, sweepMod, cleanup } = loadWithFreshDb();
+  try {
+    const ROUNDUP_URI = 'at://did:plc:alerts/app.bsky.feed.post/roundup-linear';
+    const ROUNDUP_CID = 'cid-roundup-linear';
+    const now = Date.now();
+    history.recordRoundupAnchor({
+      kind: 'bus',
+      line: '66',
+      postUri: ROUNDUP_URI,
+      postCid: ROUNDUP_CID,
+      ts: now - 27 * 60 * 1000,
+    });
+    const BUNCH_1 = 'at://did:plc:bus/app.bsky.feed.post/bunch-a';
+    const BUNCH_2 = 'at://did:plc:bus/app.bsky.feed.post/bunch-b';
+    // Pre-seed both bunching post records on the mock; only BUNCH_1 is in
+    // the DB during tick 1, so BUNCH_2 sits inert until we insert it later.
+    const agent = buildMockAgent({
+      records: {
+        [ROUNDUP_URI]: { cid: ROUNDUP_CID, value: {} },
+        [BUNCH_1]: { cid: 'cid-bunch-a', value: {} },
+        [BUNCH_2]: { cid: 'cid-bunch-b', value: {} },
+      },
+    });
+
+    // Tick 1: one bunching candidate.
+    history
+      .getDb()
+      .prepare(`
+        INSERT INTO bunching_events
+          (ts, kind, route, direction, vehicle_count, severity_ft, near_stop, posted, post_uri)
+        VALUES (?, 'bus', '66', 'pid-x', 4, 1200, 'Grand & Union', 1, ?)
+      `)
+      .run(now - 10 * 60_000, BUNCH_1);
+    await sweepMod.sweepRelatedQuotes({ kind: 'bus', agent, now });
+    assert.equal(agent.posts.length, 1);
+    const firstQuoteUri = agent.posts[0].uri;
+    const firstQuoteCid = agent.posts[0].cid;
+    assert.equal(agent.posts[0].reply.parent.uri, ROUNDUP_URI);
+
+    // Tick 2: insert second bunching candidate; the sweep should reply to
+    // the first quote, not the anchor.
+    history
+      .getDb()
+      .prepare(`
+        INSERT INTO bunching_events
+          (ts, kind, route, direction, vehicle_count, severity_ft, near_stop, posted, post_uri)
+        VALUES (?, 'bus', '66', 'pid-x', 5, 1300, 'Wabash & Lake', 1, ?)
+      `)
+      .run(now - 5 * 60_000, BUNCH_2);
+    await sweepMod.sweepRelatedQuotes({ kind: 'bus', agent, now: now + 60_000 });
+    assert.equal(agent.posts.length, 2, 'second tick should post one quote');
+    // The branch-vs-linear assertion: tick 2's quote replies to the *first
+    // quote*, not the anchor.
+    assert.equal(agent.posts[1].reply.parent.uri, firstQuoteUri);
+    assert.equal(agent.posts[1].reply.parent.cid, firstQuoteCid);
+    // Root stays the same so all replies live in one thread.
+    assert.equal(agent.posts[1].reply.root.uri, ROUNDUP_URI);
+  } finally {
+    cleanup();
+  }
+});
+
 test('train: candidate inside segment is quoted; candidate outside segment is not', async () => {
   const { history, sweepMod, cleanup } = loadWithFreshDb();
   try {
