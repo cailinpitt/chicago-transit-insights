@@ -15,13 +15,17 @@ cd "$PAGES_REPO"
 git pull --quiet
 
 node "$CTA_INSIGHTS/bin/export-web.js" public/data/alerts.json
+node "$CTA_INSIGHTS/bin/export-daily.js" public/data/daily-counts.json
 
-if git diff --quiet public/data/alerts.json; then
+# Commit if either file is modified or newly created. `git status --porcelain`
+# catches both cases (`git diff --quiet` would miss the first-ever creation of
+# daily-counts.json since untracked files don't show up in the diff).
+if [ -z "$(git status --porcelain public/data/alerts.json public/data/daily-counts.json)" ]; then
   echo "push-web-data: no changes, skipping commit"
   exit 0
 fi
 
-git add public/data/alerts.json
+git add public/data/alerts.json public/data/daily-counts.json
 git -c user.name="cta-bot" -c user.email="cta-bot@users.noreply.github.com" \
   commit -m "data: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 git push
