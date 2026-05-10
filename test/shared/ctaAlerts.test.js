@@ -237,7 +237,7 @@ test('significant: multi-route reroute (CPD funeral, 3 routes) admits despite "r
 });
 
 test('significant: massive multi-route reroute (12 routes) admits', () => {
-  // Real alert from 2026-05-08: SB Michigan/Ida B. Wells closure.
+  // Real alert from 2026-05-08: SB Michigan/Ida B. Wells closure, 2-day window.
   assert.equal(
     isSignificantAlert(
       makeAlert({
@@ -247,6 +247,90 @@ test('significant: massive multi-route reroute (12 routes) admits', () => {
         shortDescription:
           'SB buses via Michigan, Ida B. Wells, State, Balbo; 1, 3, 4, X4 resume rte on Michigan; 7, 126, 143, 147 end at Congress Plz; J14, 26, 28 continue on Balbo.',
         busRoutes: ['1', '3', '4', '7', 'J14', '26', '28', '126', '143', '146', '147', 'X4'],
+        eventStart: Date.parse('2026-05-08T14:00:00Z'),
+        eventEnd: Date.parse('2026-05-10T22:00:00Z'),
+      }),
+    ),
+    true,
+  );
+});
+
+test('not significant: long-duration multi-route reroute (6-week SB State construction)', () => {
+  // Real alert 114213 from 2026-05-10: Apr 13 → May 25 SB State construction
+  // touching 8 routes. Multi-route would normally admit, but week+ planned
+  // reroutes are construction notices and CTA reposts them for the duration.
+  assert.equal(
+    isSignificantAlert(
+      makeAlert({
+        major: false,
+        severityScore: 37,
+        headline: 'Temporary Reroute',
+        shortDescription:
+          'SB State will be closed between Wacker and Randolph. Board SB 2, 6, 10, 29, 36, 62, and 146 buses at State/Washington. Board SB 148 at Michigan/South Water.',
+        busRoutes: ['2', '6', '10', '29', '36', '62', '146', '148'],
+        eventStart: Date.parse('2026-04-13T14:00:00Z'),
+        eventEnd: Date.parse('2026-05-25T05:00:00Z'),
+      }),
+    ),
+    false,
+  );
+});
+
+test('not significant: week-long multi-route stop relocation (Pulaski OL bus terminal)', () => {
+  // Real alert 114529 from 2026-05-10: May 4 → May 11 bus terminal closure,
+  // 3 routes. Stop relocations only — no service impact, week-long.
+  assert.equal(
+    isSignificantAlert(
+      makeAlert({
+        major: false,
+        severityScore: 37,
+        headline: 'Pulaski Orange Line Station – Bus Terminal Temporary Bus Stop Relocations',
+        shortDescription:
+          'The bus terminal at the Pulaski Orange Line station will temporarily close for maintenance. #53, #53A, #62 buses will be rerouted.',
+        busRoutes: ['53', '53A', '62'],
+        eventStart: Date.parse('2026-05-04T13:00:00Z'),
+        eventEnd: Date.parse('2026-05-11T21:00:00Z'),
+      }),
+    ),
+    false,
+  );
+});
+
+test('significant: high-severity reroute admits even when long-duration', () => {
+  // Acute-incident severity (≥50) trumps the duration veto. Sev-50+ reroutes
+  // never legitimately span weeks in practice — but if CTA mis-codes one,
+  // we should still surface it rather than silently swallow.
+  assert.equal(
+    isSignificantAlert(
+      makeAlert({
+        major: false,
+        severityScore: 60,
+        headline: 'Major Police Activity Reroute',
+        shortDescription:
+          'Buses on routes 1, 2, 3 are rerouted indefinitely due to ongoing investigation.',
+        busRoutes: ['1', '2', '3'],
+        eventStart: Date.parse('2026-05-01T00:00:00Z'),
+        eventEnd: Date.parse('2026-06-01T00:00:00Z'),
+      }),
+    ),
+    true,
+  );
+});
+
+test('significant: multi-route reroute admits when dates absent (unknown duration)', () => {
+  // Treat unknown duration as short — better to over-admit than silently
+  // drop multi-route reroutes that just happen to lack EventStart/EventEnd.
+  assert.equal(
+    isSignificantAlert(
+      makeAlert({
+        major: false,
+        severityScore: 37,
+        headline: 'Temporary Reroute',
+        shortDescription:
+          '#136, #147 and #151 buses are rerouted between Devon/Sheridan-Broadway and Foster/Sheridan due to a CPD Funeral Service.',
+        busRoutes: ['136', '147', '151'],
+        eventStart: null,
+        eventEnd: null,
       }),
     ),
     true,

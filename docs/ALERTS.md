@@ -93,8 +93,8 @@ Two filters in series.
 **Significance** (`isSignificantAlert`): CTA's `MajorAlert=1` flag is unreliable in both directions — it tags single-stop closures and elevator outages as major, but also leaves real bus-substitution events flagged minor. We no longer require `MajorAlert=1`. The gate runs in this order:
 
 1. **Reroute admit overrides** — fires *only* when summary matches `reroute|detour`. Either path admits:
-   - **Multi-route**: ≥ `MULTI_ROUTE_THRESHOLD` (3) impacted routes (bus + train, summed). Structural events: CPD funeral, parade, marathon, large road closures.
-   - **High severity**: `severityScore ≥ HIGH_SEVERITY_THRESHOLD` (50). CTA's elevated score for acute incidents — police activity, crash, fire, hazmat. (See "CTA SeverityScore behavior" below for why 50.)
+   - **High severity**: `severityScore ≥ HIGH_SEVERITY_THRESHOLD` (50). CTA's elevated score for acute incidents — police activity, crash, fire, hazmat. (See "CTA SeverityScore behavior" below for why 50.) Always admits, regardless of duration.
+   - **Multi-route**: ≥ `MULTI_ROUTE_THRESHOLD` (3) impacted routes (bus + train, summed) AND `EventEnd - EventStart < LONG_PLANNED_DURATION_MS` (7d), or dates absent. Catches structural short-window events (CPD funeral, parade, marathon, road closures) while rejecting weeks-long construction reroutes that are noise after day 1. Unknown duration admits conservatively.
 2. **MINOR_PATTERNS** veto — if the headline+short summary matches any of `reroute`, `detour`, `elevator`, `escalator`, `entrance`, `bus stop`, `paint`, `track work`, `weekend service change`, etc., reject.
 3. **MAJOR_PATTERNS** admit — if the full text (headline + short + full description) matches `no train|rail|bus|service`, `not running`, `suspended`, `shuttle bus`, `major delays`, `single-track`, `between X and Y`, etc., admit.
 4. **Severity fallback** — `MajorAlert=1` AND `severityScore ≥ MIN_SEVERITY` (3) admits.
@@ -103,6 +103,8 @@ Two filters in series.
 The minor-wins ordering on steps 2/3 matters: an alert headlined "No trains stopping at Belmont (elevator construction)" looks major by keyword but should drop on the elevator gate. The bot errs on silence — a missed real outage is recoverable; spamming followers with stop closures is not.
 
 Step 1 was added 2026-05-08 after a CPD funeral generated multi-route reroute alerts that all got vetoed at step 2 (the underlying disruption fired pulse, ghost, and bunching detectors but the official CTA alerts explaining "why" never made it out). The Yellow Line bus substitution this gate originally fixed (arrived as `MajorAlert=0, SeverityScore=25`) is still caught by step 3 via the `shuttle bus` pattern.
+
+The `LONG_PLANNED_DURATION_MS` (7 d) carve-out on the multi-route path was added 2026-05-10 after the inverse problem: a 6-week SB State construction reroute (8 routes, sev 37) and a week-long Pulaski OL bus-terminal stop relocation (3 routes, sev 37) sat on the feed for the entire duration and re-admitted on every poll. The user-value of these is "scheduled construction notice" rather than "breaking news," and CTA already publishes them on chicagotransit.com / station signage. Acute multi-route events stay short (the CPD funeral was hours; the SB Michigan reroute was 2 days), so a 7-day cutoff cleanly separates the two cases.
 
 #### CTA SeverityScore behavior (calibration data, 2026-05-08)
 
@@ -125,6 +127,7 @@ If the feed's severity defaults shift in the future (CTA changes scoring), revis
 ```js
 const MULTI_ROUTE_THRESHOLD = 3;
 const HIGH_SEVERITY_THRESHOLD = 50;
+const LONG_PLANNED_DURATION_MS = 7 * 24 * 60 * 60 * 1000;
 ```
 
 To recalibrate: pull `lapi.transitchicago.com/api/1.0/alerts.aspx?outputType=JSON&activeonly=true`, histogram `SeverityScore`, and pick a threshold above the de facto reroute default that's still below outliers you'd want to admit.

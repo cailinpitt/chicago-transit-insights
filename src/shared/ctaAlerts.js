@@ -243,6 +243,14 @@ const MIN_SEVERITY = 3;
 const REROUTE_RE = /\b(reroute[ds]?|detour)\b/i;
 const MULTI_ROUTE_THRESHOLD = 3;
 const HIGH_SEVERITY_THRESHOLD = 50;
+// Multi-route reroutes spanning a week or more are construction notices, not
+// breaking news — CTA leaves them on the feed for the entire window and
+// affected riders have already adjusted by the time the bot picks them up.
+// Two real cases we caught this way: a 6-week SB State construction reroute
+// (8 routes) and a week-long bus-terminal stop relocation at Pulaski (3
+// routes). High-severity admits still apply: a sev-50+ reroute is an acute
+// event regardless of declared duration.
+const LONG_PLANNED_DURATION_MS = 7 * 24 * 60 * 60 * 1000;
 
 const MAJOR_PATTERNS = [
   /\bno\s+(train|rail|bus|service)\b/i,
@@ -309,10 +317,21 @@ function isSignificantAlert(alert) {
   // many routes (structural) or flagged with elevated severity (acute
   // incident) are admitted even though "reroute" alone normally vetoes.
   if (REROUTE_RE.test(summary)) {
-    const routeCount = (alert.busRoutes?.length || 0) + (alert.trainLines?.length || 0);
-    if (routeCount >= MULTI_ROUTE_THRESHOLD) return true;
+    // High-severity wins outright — sev≥50 reroutes are acute events
+    // (police activity, crash) regardless of declared duration.
     if (alert.severityScore != null && alert.severityScore >= HIGH_SEVERITY_THRESHOLD) {
       return true;
+    }
+    const routeCount = (alert.busRoutes?.length || 0) + (alert.trainLines?.length || 0);
+    if (routeCount >= MULTI_ROUTE_THRESHOLD) {
+      // ...except long-duration planned reroutes — multi-route construction
+      // notices that sit on the feed for weeks. Without dates we can't
+      // judge, so admit conservatively (treat unknown duration as short).
+      const duration =
+        alert.eventStart != null && alert.eventEnd != null
+          ? alert.eventEnd - alert.eventStart
+          : null;
+      if (duration == null || duration < LONG_PLANNED_DURATION_MS) return true;
     }
   }
 
