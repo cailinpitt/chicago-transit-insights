@@ -305,20 +305,37 @@ function detectDeadSegments({ line, trainLines, stations, headwayMin, now, opts 
     // have reached this stretch yet. Brown 06:10 FPs are the canonical case —
     // outbound service started at 05:34, but vehicle 401 was still climbing
     // toward Western and hadn't entered Francisco↔Irving Park. The 20 min
-    // lookback can't tell that apart from a real outage; a 2 h lookback
-    // can. If no direction-matching observation has reached the cold run's
-    // near edge in the past 2 h, treat it as not-yet-served, not cold.
+    // lookback can't tell that apart from a real outage; a 2 h lookback can.
+    //
+    // Direction matters: loop-line pruned polylines start at the outer
+    // terminal (cumDist=0) and end at the Loop (cumDist=max). Inbound trains
+    // flow with increasing cumDist (Kimball→Loop); outbound trains flow with
+    // decreasing cumDist (Loop→Kimball). The "near edge" of the cold run —
+    // the side trains enter from — is therefore runLoFt for inbound and
+    // runHiFt for outbound. The original implementation only checked the
+    // inbound case, which is why Brown 06:10 outbound kept firing despite
+    // vehicle 401 being miles short of the run.
     if (opts.longLookbackPositions && opts.longLookbackPositions.length > 0 && trDrFilter) {
       let maxAlongDirMatch = -Infinity;
+      let minAlongDirMatch = Infinity;
       for (const p of opts.longLookbackPositions) {
         if (p.trDr !== trDrFilter) continue;
         const { cumDist: along, perpDist } = snapToLineWithPerp(p.lat, p.lon, points, cumDist);
         if (perpDist > MAX_PERP_FT) continue;
         if (along > maxAlongDirMatch) maxAlongDirMatch = along;
+        if (along < minAlongDirMatch) minAlongDirMatch = along;
       }
-      if (maxAlongDirMatch < runLoFt) {
+      const flowIncreasing = directionHint !== 'outbound';
+      const reachedNearEdge = flowIncreasing
+        ? maxAlongDirMatch >= runLoFt
+        : minAlongDirMatch <= runHiFt;
+      if (!reachedNearEdge) {
+        const edgeLabel = flowIncreasing ? 'runLoFt' : 'runHiFt';
+        const edgeFt = flowIncreasing ? runLoFt : runHiFt;
+        const reachFt = flowIncreasing ? maxAlongDirMatch : minAlongDirMatch;
+        const reachStr = Number.isFinite(reachFt) ? `${(reachFt / 5280).toFixed(1)}mi` : 'none';
         console.log(
-          `[${lineLabel(line)}/${directionKeyFor(branches, branchIdx, directionHint)}] ramp-up suppressed: no direction-${trDrFilter} obs reached ${(runLoFt / 5280).toFixed(1)}mi in past 2h (max=${(maxAlongDirMatch / 5280).toFixed(1)}mi)`,
+          `[${lineLabel(line)}/${directionKeyFor(branches, branchIdx, directionHint)}] ramp-up suppressed: no direction-${trDrFilter} obs reached ${edgeLabel}=${(edgeFt / 5280).toFixed(1)}mi in past 2h (front=${reachStr})`,
         );
         continue;
       }

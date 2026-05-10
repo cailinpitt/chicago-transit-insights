@@ -166,3 +166,134 @@ test('Pulse on Brown inbound: outbound-tagged trains on Loop trunk warm inbound 
     );
   }
 });
+
+// Real-world false positive 2026-05-10: at 06:10 Brown branch-0-outbound
+// fired Francisco→Montrose because the segment was empty in the 20-min
+// lookback. But vehicle 401 — the day's first outbound train — was still
+// climbing through Belmont, miles short of the cold stretch. The ramp-up
+// veto is supposed to catch this. The original implementation only checked
+// "max cumDist reached < runLoFt", which is the correct test for INBOUND
+// trains (they progress with increasing cumDist) but inverted for OUTBOUND
+// trains (loop-line pruned polylines start at the outer terminal, so
+// outbound trains progress with DECREASING cumDist). Train 401 at Belmont
+// had a higher cumDist than runLoFt, so the check returned "reached" and
+// the FP posted.
+test('Ramp-up veto: outbound — early-morning train short of cold run suppresses (Brown 06:10 case)', () => {
+  const branches = buildLineBranches(trainLines, 'brn');
+  const outbound = branches.find((b) => b.directionHint === 'outbound');
+  assert.ok(outbound);
+
+  const now = 1_700_000_000_000;
+  const lookbackMs = 20 * 60 * 1000;
+  const points = outbound.points;
+  const cumDist = outbound.cumDist;
+  const totalFt = outbound.totalFt;
+
+  // Need enough coverage on the Loop-end half of the branch for the
+  // coverage gate (≥50% of corridor bins covered) to pass. Drop dir=1
+  // observations from the Loop apex down to ~mid-line — these are trains
+  // partway through their first outbound run, all still at high cumDist.
+  // The Kimball-end half (Francisco↔Montrose↔Irving Park) stays empty —
+  // that's the cold stretch the detector will pick up.
+  const observations = [];
+  const longLookbackPositions = [];
+  // Walk the polyline backward (Loop end first) for ~70% of points.
+  const startIdx = Math.floor(points.length * 0.3); // skip first 30% (Kimball end)
+  for (let i = 0; i < 12; i++) {
+    const ts = now - (20 - i) * 60_000;
+    for (let j = startIdx; j < points.length; j += 2) {
+      const p = points[j];
+      const lat = p[0] !== undefined ? p[0] : p.lat;
+      const lon = p[1] !== undefined ? p[1] : p.lon;
+      observations.push({ ts, lat, lon, rn: `r${i}-${j}`, trDr: '1' });
+    }
+  }
+  // Long lookback (2h): same shape — no outbound train has reached the
+  // Kimball-end stretch in the past 2 hours either.
+  for (let i = 0; i < 24; i++) {
+    const ts = now - (120 - i * 5) * 60_000;
+    for (let j = startIdx; j < points.length; j += 2) {
+      const p = points[j];
+      const lat = p[0] !== undefined ? p[0] : p.lat;
+      const lon = p[1] !== undefined ? p[1] : p.lon;
+      longLookbackPositions.push({ ts, lat, lon, trDr: '1' });
+    }
+  }
+
+  const { candidates } = detectDeadSegments({
+    line: 'brn',
+    trainLines,
+    stations: trainStations,
+    headwayMin: 8,
+    now,
+    opts: { recentPositions: observations, longLookbackPositions, lookbackMs },
+  });
+
+  // No outbound candidate should survive the ramp-up veto: even though the
+  // Kimball-end stretch is genuinely empty in the lookback, the day's
+  // outbound trains haven't reached it yet (min cumDist of dir=1 obs > runHiFt).
+  for (const c of candidates) {
+    assert.notEqual(
+      c.direction,
+      'branch-0-outbound',
+      `outbound candidate ${c.from}→${c.to} should have been suppressed by ramp-up veto`,
+    );
+  }
+});
+
+// Mirror of the above for inbound: when no dir=5 obs has reached the cold
+// run's near edge (runLoFt) in 2h, suppress. This is the case the original
+// code already handled correctly — keep it covered so a future refactor
+// doesn't break it.
+test('Ramp-up veto: inbound — early-morning train short of cold run suppresses', () => {
+  const branches = buildLineBranches(trainLines, 'brn');
+  const inbound = branches.find((b) => b.directionHint === 'inbound');
+  assert.ok(inbound);
+
+  const now = 1_700_000_000_000;
+  const lookbackMs = 20 * 60 * 1000;
+  const points = inbound.points;
+
+  // Inbound trains progress with increasing cumDist. Drop dir=5 obs only
+  // on the Kimball-end half of the polyline (~first 70%), leaving the
+  // Loop-end stretch genuinely empty in the lookback. Inbound trains
+  // haven't reached the Loop end yet.
+  const observations = [];
+  const longLookbackPositions = [];
+  const endIdx = Math.floor(points.length * 0.7);
+  for (let i = 0; i < 12; i++) {
+    const ts = now - (20 - i) * 60_000;
+    for (let j = 0; j < endIdx; j += 2) {
+      const p = points[j];
+      const lat = p[0] !== undefined ? p[0] : p.lat;
+      const lon = p[1] !== undefined ? p[1] : p.lon;
+      observations.push({ ts, lat, lon, rn: `r${i}-${j}`, trDr: '5' });
+    }
+  }
+  for (let i = 0; i < 24; i++) {
+    const ts = now - (120 - i * 5) * 60_000;
+    for (let j = 0; j < endIdx; j += 2) {
+      const p = points[j];
+      const lat = p[0] !== undefined ? p[0] : p.lat;
+      const lon = p[1] !== undefined ? p[1] : p.lon;
+      longLookbackPositions.push({ ts, lat, lon, trDr: '5' });
+    }
+  }
+
+  const { candidates } = detectDeadSegments({
+    line: 'brn',
+    trainLines,
+    stations: trainStations,
+    headwayMin: 8,
+    now,
+    opts: { recentPositions: observations, longLookbackPositions, lookbackMs },
+  });
+
+  for (const c of candidates) {
+    assert.notEqual(
+      c.direction,
+      'branch-1-inbound',
+      `inbound candidate ${c.from}→${c.to} should have been suppressed by ramp-up veto`,
+    );
+  }
+});
