@@ -275,6 +275,23 @@ function detectDeadSegments({ line, trainLines, stations, headwayMin, now, opts 
       }
     }
 
+    // Off-peak Purple south-of-Howard veto. The destination-filter in the
+    // bin script (excludeDestinations: ['Loop']) drops AM-rush SB stragglers
+    // from the corridor bbox, but NB return-to-yard deadheads (destination
+    // Linden / Howard / NULL) still bleed the bbox south through the Loop
+    // trunk for hours into midday — producing FPs like the 2026-05-11
+    // 10:50 AM Chicago→Quincy post. Off-peak Purple service is shuttle-only
+    // (Linden↔Howard), so any cold-run candidate with an endpoint south of
+    // Howard is by definition not a real outage. Howard-as-endpoint is
+    // already covered by MID_POLYLINE_TURNAROUND_STATIONS above, so strict
+    // `<` is fine here.
+    if (line === 'p' && opts.purpleOffPeak) {
+      const HOWARD_LAT = 42.01906;
+      if (fromStation.station.lat < HOWARD_LAT || toStation.station.lat < HOWARD_LAT) {
+        continue;
+      }
+    }
+
     // Terminal-adjacency veto: cold runs sitting at the corridor's terminal-
     // most station with `coldMs` barely clearing the threshold are usually a
     // single missed turnaround on a sparse line, not a real outage. Require a

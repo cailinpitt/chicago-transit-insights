@@ -556,10 +556,8 @@ async function main() {
     // segment). The destination filter handles that case; the 6h lookback
     // remains so long real outages stay detectable.
     const CORRIDOR_LOOKBACK_MS = 6 * 60 * 60 * 1000;
-    const corridorOpts =
-      line === 'p' && !purpleExpressLikelyActive(new Date(now))
-        ? { excludeDestinations: ['Loop'] }
-        : undefined;
+    const purpleOffPeak = line === 'p' && !purpleExpressLikelyActive(new Date(now));
+    const corridorOpts = purpleOffPeak ? { excludeDestinations: ['Loop'] } : undefined;
     const corridorBbox = getLineCorridorBbox(line, now - CORRIDOR_LOOKBACK_MS, corridorOpts);
     // A tighter "still warm?" probe: was the line observed recently (60 min)?
     // The 6 h corridor pretends a line is active if last night's owl service
@@ -657,6 +655,7 @@ async function main() {
             lon: r.lon,
             trDr: r.trDr,
           })),
+          purpleOffPeak,
         },
       });
     } catch (e) {
