@@ -291,8 +291,16 @@ async function sweepResolutions({ kind, getName, agentGetter, now }) {
     const text = buildResolutionText({ kind, line: row.line, name: getName(row.line) });
     // The roundup_anchors row stores the original AT URI; its rkey is the
     // canonical event id used by chicagotransitalerts.app/event/<id>.
+    //
+    // Resolution replies link to the /resolved variant so Bluesky's link-card
+    // service ("CardyB") fetches a distinct URL from the original post and
+    // renders an 'Archived' OG card instead of reusing the cached 'Active' one
+    // it captured at original-post time. The /resolved page renders the same
+    // view as the canonical URL — the suffix only exists to bust Bluesky's
+    // URL-keyed card cache. See cta-alert-history's scripts/prerender-events.js
+    // for the variant generation.
     const rkey = row.post_uri.split('/').pop();
-    const eventUrl = `${EVENT_BASE_URL}/${rkey}`;
+    const eventUrl = `${EVENT_BASE_URL}/${rkey}/resolved`;
     if (DRY_RUN) {
       console.log(`--- DRY RUN roundup-resolve ${label} (link: ${eventUrl}) ---\n${text}`);
       continue;

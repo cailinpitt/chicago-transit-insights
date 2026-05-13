@@ -328,7 +328,10 @@ test('sweepResolutions: posts after MIN_CLEAR_TICKS consecutive sub-threshold ti
       `URL should not be in post text, got: ${posts[0].text}`,
     );
     assert.equal(posts[0].embed?.$type, 'app.bsky.embed.external');
-    assert.equal(posts[0].embed?.external?.uri, 'https://chicagotransitalerts.app/event/roundup-1');
+    assert.equal(
+      posts[0].embed?.external?.uri,
+      'https://chicagotransitalerts.app/event/roundup-1/resolved',
+    );
 
     // Subsequent sweeps shouldn't post again — resolved_ts is now set.
     await sweep({ kind: 'bus', getName: () => 'Chicago', agentGetter, now: now + 180_000 });
