@@ -79,7 +79,7 @@ function main() {
           ORDER BY c.ts ASC LIMIT 1
         ) AS resolved_post_uri
        FROM disruption_events d
-       WHERE d.source IN ('observed', 'observed-held') AND d.posted = 1 AND d.post_uri IS NOT NULL
+       WHERE d.source IN ('observed', 'observed-held', 'observed-thin') AND d.posted = 1 AND d.post_uri IS NOT NULL
        ORDER BY d.ts DESC`,
     )
     .all();
@@ -106,8 +106,14 @@ function main() {
     ...pulseObservations.map((row) => ({
       ...row,
       // Map disruption_events.source to the web's precise detection_source.
-      // 'observed-held' = held trains/buses; 'observed' = cold stretch.
-      _source: row.pulse_source === 'observed-held' ? 'pulse-held' : 'pulse-cold',
+      // 'observed-held' = held trains/buses; 'observed' = cold stretch;
+      // 'observed-thin' = thin-service whole-route silence on a low-freq route.
+      _source:
+        row.pulse_source === 'observed-held'
+          ? 'pulse-held'
+          : row.pulse_source === 'observed-thin'
+            ? 'thin-gap'
+            : 'pulse-cold',
       _evidence: parseEvidence(row.evidence_json),
     })),
     ...roundupObservations.map((row) => ({
@@ -125,7 +131,7 @@ function main() {
       `SELECT MIN(ts) as min_ts FROM (
          SELECT MIN(first_seen_ts) as ts FROM alert_posts
          UNION ALL
-         SELECT MIN(ts) as ts FROM disruption_events WHERE source IN ('observed', 'observed-held') AND posted = 1
+         SELECT MIN(ts) as ts FROM disruption_events WHERE source IN ('observed', 'observed-held', 'observed-thin') AND posted = 1
          UNION ALL
          SELECT MIN(ts) as ts FROM roundup_anchors
        )`,

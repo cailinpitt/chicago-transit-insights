@@ -14,7 +14,7 @@ const {
   expectedBusRouteActiveTrips,
   loadIndex,
 } = require('../../src/shared/gtfs');
-const { recordMetaSignal } = require('../../src/shared/history');
+const { recordMetaSignal, recordDisruption } = require('../../src/shared/history');
 const { acquireCooldown, isOnCooldown } = require('../../src/shared/state');
 const { loginBus, postText } = require('../../src/bus/bluesky');
 const { buildRollupThread } = require('../../src/shared/post');
@@ -152,9 +152,30 @@ async function main() {
 
   const agent = await loginBus();
   let replyRef = null;
+  let eventCursor = 0;
   for (let i = 0; i < finalPosts.length; i++) {
     const result = await postText(agent, finalPosts[i].text, replyRef);
     console.log(`Posted ${i + 1}/${finalPosts.length}: ${result.url}`);
+    // Record one disruption_event per route covered by this post so the
+    // cta-alert-history export pipeline picks it up. The export-web.js
+    // 'observed' / 'observed-held' / 'observed-thin' source union is the
+    // only path from server-side detection to the public dashboard.
+    const slice = committed.slice(eventCursor, eventCursor + finalPosts[i].lineCount);
+    for (const e of slice) {
+      recordDisruption({
+        kind: 'bus',
+        line: e.route,
+        source: 'observed-thin',
+        posted: true,
+        postUri: result.uri,
+        evidence: {
+          headwayMin: e.headwayMin,
+          windowMin: e.windowMin,
+          missedTrips: e.missedTrips,
+        },
+      });
+    }
+    eventCursor += finalPosts[i].lineCount;
     if (i < finalPosts.length - 1) replyRef = await resolveReplyRef(agent, result.uri);
   }
 }
