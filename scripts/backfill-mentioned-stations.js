@@ -19,6 +19,17 @@ const DRY_RUN = process.argv.includes('--dry-run');
 
 function main() {
   const db = new Database(DB_PATH);
+  // The mentioned_stations migration normally runs lazily inside the shared
+  // history module's db() initializer, but this script opens the DB directly.
+  // Add the column if it isn't there yet so a first-run on the live DB
+  // doesn't fail with "no such column".
+  const cols = db
+    .prepare('PRAGMA table_info(alert_posts)')
+    .all()
+    .map((c) => c.name);
+  if (!cols.includes('mentioned_stations')) {
+    db.exec('ALTER TABLE alert_posts ADD COLUMN mentioned_stations TEXT');
+  }
   const rows = db
     .prepare(
       `SELECT alert_id, routes, headline, short_description
