@@ -377,10 +377,17 @@ function isSignificantAlert(alert) {
       // ...except long-duration planned reroutes — multi-route construction
       // notices that sit on the feed for weeks. Without dates we can't
       // judge, so admit conservatively (treat unknown duration as short).
-      const duration =
-        alert.eventStart != null && alert.eventEnd != null
-          ? alert.eventEnd - alert.eventStart
-          : null;
+      // A date-only EventStart/EventEnd anchors to end-of-day, so the
+      // arithmetic still produces a number — but that number reflects a
+      // calendar-day window CTA only specified to the day, not a precise
+      // event duration. Treat as unknown here so we don't retroactively
+      // filter out alerts that the prior (strict-parser) behavior admitted.
+      const hasPreciseWindow =
+        alert.eventStart != null &&
+        alert.eventEnd != null &&
+        !alert.eventStartIsDateOnly &&
+        !alert.eventEndIsDateOnly;
+      const duration = hasPreciseWindow ? alert.eventEnd - alert.eventStart : null;
       if (duration == null || duration < LONG_PLANNED_DURATION_MS) return true;
     }
   }
