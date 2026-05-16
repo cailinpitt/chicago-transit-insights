@@ -48,7 +48,10 @@ function destForBranchDir(rns, trDr, destByRnDir, allowedDests = null) {
   for (const rn of rns) {
     const dest = destByRnDir.get(rn)?.get(trDr);
     if (!dest) continue;
-    if (allowedDests && !allowedDests.has(dest)) continue;
+    // "Loop" is the inbound destination string for loop-trunk lines
+    // (Brown/Orange/Pink/Purple) — it's never a station, so allowedDests
+    // (derived from polyline endpoints) would otherwise drop it.
+    if (allowedDests && !allowedDests.has(dest) && dest !== 'Loop') continue;
     counts.set(dest, (counts.get(dest) || 0) + 1);
   }
   let best = null;
@@ -180,7 +183,12 @@ async function main() {
     const numBins = Math.max(MIN_BINS, Math.round(totalFt / FT_PER_BIN));
     const binSpeedsByDir = {};
     const allowedDests = branchTerminusDests(branches[i], trainStations);
+    // Loop lines emit two branches sharing one polyline, distinguished only
+    // by trDrFilter. Without this scope, each branch would process both
+    // directions and dedupe would leave duplicate entries.
+    const trDrFilter = branches[i].trDrFilter || null;
     for (const [trDr, samples] of byDir) {
+      if (trDrFilter && trDr !== trDrFilter) continue;
       binSpeedsByDir[trDr] = binSegments(samples, totalFt, numBins);
       const s = summarize(binSpeedsByDir[trDr], TRAIN_THRESHOLDS);
       const dest = destForBranchDir(
