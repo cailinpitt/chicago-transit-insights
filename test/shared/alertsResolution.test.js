@@ -239,3 +239,111 @@ test('resetAlertClearTicks clears pending_resolved_ts so next clear run gets its
     cleanup();
   }
 });
+
+function listVersions(history, alertId) {
+  return history
+    .getDb()
+    .prepare(
+      'SELECT ts, headline, short_description FROM alert_versions WHERE alert_id = ? ORDER BY ts ASC',
+    )
+    .all(alertId);
+}
+
+test('alert_versions: first sighting seeds an initial version', () => {
+  const { history, cleanup } = loadHistoryWithDb(freshDbPath());
+  try {
+    history.recordAlertSeen(
+      {
+        alertId: 'a1',
+        kind: 'train',
+        routes: 'red',
+        headline: 'Trains are delayed',
+        shortDescription: 'Crews are working to restore service.',
+        postUri: 'at://x/y/z',
+      },
+      1000,
+    );
+    const versions = listVersions(history, 'a1');
+    assert.equal(versions.length, 1);
+    assert.equal(versions[0].ts, 1000);
+    assert.equal(versions[0].headline, 'Trains are delayed');
+  } finally {
+    cleanup();
+  }
+});
+
+test('alert_versions: changed body text appends a new version row', () => {
+  const { history, cleanup } = loadHistoryWithDb(freshDbPath());
+  try {
+    history.recordAlertSeen(
+      {
+        alertId: 'a1',
+        kind: 'train',
+        routes: 'red',
+        headline: 'Trains are delayed',
+        shortDescription: 'Crews are working to restore service.',
+        postUri: 'at://x/y/z',
+      },
+      1000,
+    );
+    // Same text — no new version.
+    history.recordAlertSeen(
+      {
+        alertId: 'a1',
+        kind: 'train',
+        routes: 'red',
+        headline: 'Trains are delayed',
+        shortDescription: 'Crews are working to restore service.',
+      },
+      2000,
+    );
+    assert.equal(listVersions(history, 'a1').length, 1);
+    // CTA edits the body — new version.
+    history.recordAlertSeen(
+      {
+        alertId: 'a1',
+        kind: 'train',
+        routes: 'red',
+        headline: 'Trains are delayed',
+        shortDescription: 'Issue resolved, service is now restoring.',
+      },
+      3000,
+    );
+    const versions = listVersions(history, 'a1');
+    assert.equal(versions.length, 2);
+    assert.equal(versions[1].ts, 3000);
+    assert.equal(versions[1].short_description, 'Issue resolved, service is now restoring.');
+  } finally {
+    cleanup();
+  }
+});
+
+test('alert_versions: null incoming fields do not force a spurious version', () => {
+  const { history, cleanup } = loadHistoryWithDb(freshDbPath());
+  try {
+    history.recordAlertSeen(
+      {
+        alertId: 'a1',
+        kind: 'train',
+        routes: 'red',
+        headline: 'Trains are delayed',
+        shortDescription: 'Crews are working to restore service.',
+      },
+      1000,
+    );
+    // Subsequent tick with no shortDescription supplied — COALESCE preserves
+    // the existing column, so no new version should be inserted.
+    history.recordAlertSeen(
+      {
+        alertId: 'a1',
+        kind: 'train',
+        routes: 'red',
+        headline: 'Trains are delayed',
+      },
+      2000,
+    );
+    assert.equal(listVersions(history, 'a1').length, 1);
+  } finally {
+    cleanup();
+  }
+});

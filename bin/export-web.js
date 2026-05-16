@@ -49,6 +49,35 @@ function main() {
     )
     .all();
 
+  // Per-alert version history. CTA edits the headline / body text on a live
+  // alert as the situation evolves ("trains stopped" → "service restoring");
+  // each edit lands as a row here. Only attached to the export when an alert
+  // has >1 version so single-version alerts don't bloat the JSON.
+  const versionRows = db
+    .prepare(
+      `SELECT alert_id, ts, headline, short_description,
+              affected_from_station, affected_to_station, affected_direction
+       FROM alert_versions
+       ORDER BY alert_id, ts ASC`,
+    )
+    .all();
+  const versionsByAlert = new Map();
+  for (const row of versionRows) {
+    let list = versionsByAlert.get(row.alert_id);
+    if (!list) {
+      list = [];
+      versionsByAlert.set(row.alert_id, list);
+    }
+    list.push({
+      ts: row.ts,
+      headline: row.headline,
+      short_description: row.short_description ?? null,
+      affected_from_station: row.affected_from_station ?? null,
+      affected_to_station: row.affected_to_station ?? null,
+      affected_direction: row.affected_direction ?? null,
+    });
+  }
+
   // Bot-detected disruptions (pulse observations). Each 'observed' /
   // 'observed-held' row is paired with the earliest matching
   // 'observed-clear' on the same line/direction/from/to after it, if one
@@ -186,6 +215,14 @@ function main() {
       // UI can render "Sun May 25" without an artificial 11:59 PM.
       cta_event_start_is_date_only: row.cta_event_start_is_date_only === 1,
       cta_event_end_is_date_only: row.cta_event_end_is_date_only === 1,
+      // Successive edits CTA made to the alert text (headline / body /
+      // affected scope). Only included when >1 version exists — a fresh
+      // alert that CTA never edited is fully described by the top-level
+      // headline/short_description, so the field stays absent there.
+      ...(() => {
+        const versions = versionsByAlert.get(row.alert_id);
+        return versions && versions.length > 1 ? { versions } : {};
+      })(),
     })),
     observations: observations.map((row) => ({
       id: row.id,

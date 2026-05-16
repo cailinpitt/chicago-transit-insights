@@ -92,6 +92,19 @@ function db() {
     CREATE INDEX IF NOT EXISTS idx_alert_posts_kind
       ON alert_posts(kind);
 
+    CREATE TABLE IF NOT EXISTS alert_versions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      alert_id TEXT NOT NULL,
+      ts INTEGER NOT NULL,
+      headline TEXT,
+      short_description TEXT,
+      affected_from_station TEXT,
+      affected_to_station TEXT,
+      affected_direction TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_alert_versions_alert_ts
+      ON alert_versions(alert_id, ts);
+
     CREATE TABLE IF NOT EXISTS disruption_events (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       ts INTEGER NOT NULL,
@@ -300,6 +313,23 @@ function db() {
   if (!alertCols.includes('mentioned_stations')) {
     _db.exec('ALTER TABLE alert_posts ADD COLUMN mentioned_stations TEXT');
   }
+  // Seed alert_versions with the current state of every alert_posts row that
+  // has no version history yet. Runs once at startup after the table is
+  // created (or after an existing DB picks up the new table on this deploy).
+  // Without this, the event page's "Message history" timeline would be empty
+  // for every pre-existing alert until CTA happens to edit it again.
+  _db.exec(`
+    INSERT INTO alert_versions
+      (alert_id, ts, headline, short_description,
+       affected_from_station, affected_to_station, affected_direction)
+    SELECT
+      ap.alert_id, ap.first_seen_ts, ap.headline, ap.short_description,
+      ap.affected_from_station, ap.affected_to_station, ap.affected_direction
+    FROM alert_posts ap
+    WHERE NOT EXISTS (
+      SELECT 1 FROM alert_versions av WHERE av.alert_id = ap.alert_id
+    )
+  `);
   const disruptionCols = _db
     .prepare('PRAGMA table_info(disruption_events)')
     .all()
@@ -451,6 +481,41 @@ function recordAlertSeen(
   const eeDate = ctaEventEndIsDateOnly ? 1 : 0;
   const sd = shortDescription == null ? null : shortDescription;
   const existing = getAlertPost(alertId);
+  // Decide whether to record a new version row. A "version" is the
+  // user-visible message text plus its affected scope; CTA edits any of
+  // these as the situation evolves (e.g. "trains stopped" → "service
+  // restoring"). We only count a change when the incoming value is
+  // non-null and differs from what's stored — the surrounding UPDATEs use
+  // COALESCE(?, col), so a null incoming value preserves the existing
+  // column and shouldn't count as a change.
+  function changed(incoming, stored) {
+    return incoming != null && incoming !== stored;
+  }
+  const isVersionChange =
+    !existing ||
+    changed(headline, existing.headline) ||
+    changed(sd, existing.short_description) ||
+    changed(af, existing.affected_from_station) ||
+    changed(at, existing.affected_to_station) ||
+    changed(ad, existing.affected_direction);
+  function insertVersion() {
+    db()
+      .prepare(`
+        INSERT INTO alert_versions
+          (alert_id, ts, headline, short_description,
+           affected_from_station, affected_to_station, affected_direction)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        alertId,
+        now,
+        headline ?? existing?.headline ?? null,
+        sd ?? existing?.short_description ?? null,
+        af ?? existing?.affected_from_station ?? null,
+        at ?? existing?.affected_to_station ?? null,
+        ad ?? existing?.affected_direction ?? null,
+      );
+  }
   if (existing) {
     // Re-engage tracking when (a) post finally lands after a premature
     // resolution sweep wiped resolved_ts before any post existed, or (b) the
@@ -496,7 +561,12 @@ function recordAlertSeen(
           eeDate,
           alertId,
         );
+      // Re-engagement after a resolution gap is always a new chapter — log
+      // the message state at re-publication time even if the text matches
+      // the prior chapter, so the timeline shows the gap.
+      insertVersion();
     } else {
+      if (isVersionChange) insertVersion();
       db()
         .prepare(`
         UPDATE alert_posts
@@ -534,6 +604,7 @@ function recordAlertSeen(
     }
     return;
   }
+  insertVersion();
   db()
     .prepare(`
     INSERT INTO alert_posts
