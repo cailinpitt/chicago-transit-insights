@@ -42,6 +42,7 @@ const {
   countDistinctTsInBusObservations,
   getActiveBusRoutesSince,
   rolloffOldObservations,
+  getBusObservations,
 } = require('../../src/shared/observations');
 const { acquireCooldown, clearCooldown } = require('../../src/shared/state');
 const {
@@ -375,7 +376,21 @@ async function postClearReply(route, prior, agentGetter) {
     ? await postTextWithLinkCard(agent, text, replyRef, link)
     : await postText(agent, text, replyRef);
   console.log(`Posted bus pulse clear ${route}: ${result.url}`);
-  // Backdate to clear_started_ts so recorded clear ≈ real recovery.
+  // Backdate to real recovery. For the blackout variant (no affected_pid)
+  // the first observation of any bus on the route after firing is the
+  // ground-truth recovery moment; using it instead of clear_started_ts
+  // closes the up-to-one-cron-tick gap between actual return and the
+  // detector noticing. Held variant stays on clear_started_ts — "any
+  // observation" doesn't mean recovery there since buses are seen the
+  // whole time, they just aren't moving past the cluster.
+  const fallbackTs = prior.clear_started_ts || Date.now();
+  let recordedTs = fallbackTs;
+  if (!prior.affected_pid && prior.started_ts) {
+    const obs = getBusObservations(route, prior.started_ts + 1);
+    if (obs.length > 0) {
+      recordedTs = obs.reduce((m, o) => (o.ts < m ? o.ts : m), obs[0].ts);
+    }
+  }
   recordDisruption(
     {
       kind: 'bus',
@@ -387,7 +402,7 @@ async function postClearReply(route, prior, agentGetter) {
       posted: true,
       postUri: result.uri,
     },
-    prior.clear_started_ts || Date.now(),
+    recordedTs,
   );
 }
 
