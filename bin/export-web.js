@@ -15,6 +15,10 @@ require('../src/shared/env');
 const Path = require('node:path');
 const Fs = require('node:fs');
 const Database = require('better-sqlite3');
+const {
+  describeBotObservation,
+  describeBotResolution,
+} = require('../src/shared/observationDescribe');
 
 const DB_PATH =
   process.env.HISTORY_DB_PATH || Path.join(__dirname, '..', 'state', 'history.sqlite');
@@ -224,23 +228,42 @@ function main() {
         return versions && versions.length > 1 ? { versions } : {};
       })(),
     })),
-    observations: observations.map((row) => ({
-      id: row.id,
-      kind: row.kind,
-      line: row.line,
-      direction: row.direction ?? null,
-      from_station: row.from_station ?? null,
-      to_station: row.to_station ?? null,
-      detection_source: row._source, // 'pulse-cold' | 'pulse-held' | 'roundup'
-      signals: row.signals ? row.signals.split(',') : null, // e.g. ['gap', 'bunching']
-      evidence: row._evidence ?? null,
-      ts: row.ts,
-      resolved_ts: row.resolved_ts ?? null,
-      duration_ms: row.resolved_ts != null ? row.resolved_ts - row.ts : null,
-      active: row.resolved_ts == null,
-      post_url: atUriToUrl(row.post_uri),
-      resolved_post_url: atUriToUrl(row.resolved_post_uri),
-    })),
+    observations: observations.map((row) => {
+      const detectionSource = row._source; // 'pulse-cold' | 'pulse-held' | 'thin-gap' | 'roundup'
+      const signals = row.signals ? row.signals.split(',') : null;
+      // Pre-render the plain-English sentences so the web app stays a dumb
+      // renderer. Detection is always present when describable; the resolution
+      // sentence is omitted when the observation is still active so the
+      // renderer can branch on field presence rather than incident.active.
+      const describeShape = {
+        kind: row.kind,
+        line: row.line,
+        detection_source: detectionSource,
+        signals,
+      };
+      const botDescription = describeBotObservation(describeShape);
+      const botResolvedDescription =
+        row.resolved_ts != null ? describeBotResolution(describeShape) : null;
+      return {
+        id: row.id,
+        kind: row.kind,
+        line: row.line,
+        direction: row.direction ?? null,
+        from_station: row.from_station ?? null,
+        to_station: row.to_station ?? null,
+        detection_source: detectionSource,
+        signals, // e.g. ['gap', 'bunching']
+        evidence: row._evidence ?? null,
+        ts: row.ts,
+        resolved_ts: row.resolved_ts ?? null,
+        duration_ms: row.resolved_ts != null ? row.resolved_ts - row.ts : null,
+        active: row.resolved_ts == null,
+        post_url: atUriToUrl(row.post_uri),
+        resolved_post_url: atUriToUrl(row.resolved_post_uri),
+        bot_description: botDescription,
+        bot_resolved_description: botResolvedDescription,
+      };
+    }),
   };
 
   const outputPath = process.argv[2];
