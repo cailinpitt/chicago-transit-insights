@@ -799,12 +799,17 @@ async function main() {
 
     if (detection.skipped) {
       tally.skippedDetector++;
-      // Sparse-coverage doesn't mean the prior outage is still active — it
-      // just means we can't evaluate cold bins this tick. If we have an open
-      // pulse on this line and observations did arrive (just not enough to
-      // hit the coverage threshold), advance clear-ticks anyway so a stale
-      // FP doesn't stay pinned forever.
-      if (detection.skipped === 'sparse-coverage' && recent.length > 0) {
+      // Sparse-coverage / sparse-span don't mean the prior outage is still
+      // active — they just mean we can't evaluate cold bins this tick (not
+      // enough observation coverage, or observations clustered in too
+      // narrow a temporal window). If we have an open pulse on this line
+      // and observations did arrive, advance clear-ticks anyway so a stale
+      // FP doesn't stay pinned forever — a real ongoing outage will keep
+      // re-firing once obs span recovers, resetting clear_ticks back to 0.
+      if (
+        (detection.skipped === 'sparse-coverage' || detection.skipped === 'sparse-span') &&
+        recent.length > 0
+      ) {
         const rows = getDb()
           .prepare('SELECT * FROM pulse_state WHERE line = ? AND active_post_uri IS NOT NULL')
           .all(line);
@@ -813,7 +818,7 @@ async function main() {
         }
         if (rows.length > 0) {
           console.log(
-            `train-pulse: ${lineLabel(line)} — detector skipped (sparse-coverage) but advancing clear-ticks for ${rows.length} open pulse(s)`,
+            `train-pulse: ${lineLabel(line)} — detector skipped (${detection.skipped}) but advancing clear-ticks for ${rows.length} open pulse(s)`,
           );
           continue;
         }
