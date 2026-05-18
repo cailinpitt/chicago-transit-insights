@@ -103,14 +103,23 @@ test('describeBotResolution: pulse-held alone uses "moving again"', () => {
   assert.equal(out, 'Trains moving again on the Red Line, service appears to be back to normal.');
 });
 
-test('describeBotResolution: roundup with mixed signals uses "observed again"', () => {
+test('describeBotResolution: degradation roundup drops lead clause (vehicles were always visible)', () => {
   const out = describeBotResolution({
-    kind: 'bus',
-    line: '66',
+    kind: 'train',
+    line: 'red',
     detection_source: 'roundup',
     signals: ['ghost', 'gap'],
   });
-  assert.equal(out, 'Buses observed again on Route 66, service appears to be back to normal.');
+  assert.equal(out, 'Red Line service appears to be back to normal.');
+});
+
+test('describeBotResolution: single-signal degradation drops lead clause', () => {
+  const out = describeBotResolution({
+    kind: 'bus',
+    line: '66',
+    detection_source: 'bunching',
+  });
+  assert.equal(out, 'Route 66 service appears to be back to normal.');
 });
 
 test('describeBotResolution: null for alerts/merged', () => {

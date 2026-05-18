@@ -104,34 +104,48 @@ function describeBotObservation(incident) {
   return `${subject} appears degraded — ${joinPhrases(phrases)}.`;
 }
 
-// Resolution sentence companion to describeBotObservation. Tailors verb to
-// the signal mix: held variants get "moving again" because the vehicles were
-// visible throughout the held state — only forward motion is recovery —
-// while cold/thin/roundup variants get "observed again" because the vehicles
-// themselves were absent.
+// Resolution sentence companion to describeBotObservation. Tailors the lead
+// clause to the signal *category* so the sentence doesn't overclaim:
+//
+//   - absence (thin-gap, pulse-cold): vehicles weren't visible → "observed
+//     again"
+//   - paralysis (pulse-held): vehicles were visible but stuck → "moving
+//     again"
+//   - degradation (gap, bunching, ghost — including any roundup that bundles
+//     them): vehicles were visible AND moving, service was just uneven →
+//     drop the lead clause entirely. Saying "observed again" here would be
+//     wrong because the trains were always observed.
 function describeBotResolution(incident) {
   if (!incident) return null;
   if (isMergedOrAlert(incident)) return null;
 
   const signals = observationSignals(incident);
   if (signals.length === 0) return null;
-  // Drop unknown signals so a future signal kind doesn't shape the verb
-  // unexpectedly. Mirrors describeBotObservation's filter.
   const known = signals.filter((s) => signalPhrase(s, 'bus') != null);
   if (known.length === 0) return null;
 
   const subject = botObservationSubject(incident);
   if (!subject) return null;
 
-  const heldOnly = known.every((s) => s === 'pulse-held');
-  const noun = incident.kind === 'bus' ? 'Buses' : 'Trains';
-  const verb = heldOnly ? 'moving again' : 'observed again';
+  const ABSENCE = new Set(['thin-gap', 'pulse-cold']);
+  const PARALYSIS = new Set(['pulse-held']);
+  const allAbsence = known.every((s) => ABSENCE.has(s));
+  const allParalysis = known.every((s) => PARALYSIS.has(s));
+
+  // Degradation (or any mixed bag) gets the minimal sentence — no leading
+  // clause about vehicles being visible or moving, since neither was the
+  // problem.
+  if (!allAbsence && !allParalysis) {
+    return `${subject} appears to be back to normal.`;
+  }
 
   // Subject is "Route 124 service" / "Brown Line service" — strip the
   // trailing " service" so the sentence reads "on Route 124" / "on the Brown
   // Line" rather than "on Route 124 service".
   const place = subject.replace(/ service$/, '');
   const article = incident.kind === 'bus' ? '' : 'the ';
+  const noun = incident.kind === 'bus' ? 'Buses' : 'Trains';
+  const verb = allParalysis ? 'moving again' : 'observed again';
 
   return `${noun} ${verb} on ${article}${place}, service appears to be back to normal.`;
 }
