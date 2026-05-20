@@ -256,7 +256,16 @@ function main() {
         evidence: row._evidence ?? null,
         ts: row.ts,
         resolved_ts: row.resolved_ts ?? null,
-        duration_ms: row.resolved_ts != null ? row.resolved_ts - row.ts : null,
+        // For absence-style observations (pulse-cold, thin-gap), `ts` is when
+        // the bot *posted* — the corridor was already cold for ≥ coldThresholdMin
+        // before that. Back-date the start so the reported duration reflects
+        // the actual disruption length, not just the post-to-resolve window.
+        duration_ms: (() => {
+          if (row.resolved_ts == null) return null;
+          const coldThresholdMin = row._evidence?.coldThresholdMin;
+          const startTs = coldThresholdMin != null ? row.ts - coldThresholdMin * 60_000 : row.ts;
+          return row.resolved_ts - startTs;
+        })(),
         active: row.resolved_ts == null,
         post_url: atUriToUrl(row.post_uri),
         resolved_post_url: atUriToUrl(row.resolved_post_uri),
