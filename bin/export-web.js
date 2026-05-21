@@ -252,6 +252,36 @@ function main() {
       const botResolvedDescription =
         row.resolved_ts != null ? describeBotResolution(describeShape) : null;
       const botEvidenceBullets = describeBotEvidenceBullets(describeShape);
+
+      // Absence-style observations (pulse-cold, thin-gap, roundups that bundle
+      // them) are detected only once the corridor has *already* been cold for a
+      // while — `ts` is when the bot posted, not when the disruption began. We
+      // back-date an inferred start so the reported duration reflects the real
+      // outage length rather than the tiny post-to-resolve window.
+      //
+      // Prefer `minutesSinceLastTrain` (the gap actually observed at post time)
+      // over `coldThresholdMin` (the detector's floor) — when the corridor has
+      // been cold longer than the threshold, the floor would under-count.
+      // Roundups carry no observation-level evidence, so dig into the bullets
+      // for the constituent pulse-cold / thin-gap pick.
+      const onsetTs = (() => {
+        const coldSources = new Set(['pulse-cold', 'thin-gap']);
+        let backdateMin = null;
+        if (row._evidence && coldSources.has(detectionSource)) {
+          backdateMin =
+            row._evidence.minutesSinceLastTrain ?? row._evidence.coldThresholdMin ?? null;
+        } else if (Array.isArray(row._bullets)) {
+          for (const b of row._bullets) {
+            if (!coldSources.has(b?.source)) continue;
+            const d = b.detail || {};
+            const m = d.minutesSinceLastTrain ?? d.coldThresholdMin ?? null;
+            if (m != null && (backdateMin == null || m > backdateMin)) backdateMin = m;
+          }
+        }
+        // Only emit onset_ts when we genuinely inferred an earlier start; for
+        // non-absence observations the start is just `ts` and onset_ts is null.
+        return backdateMin != null ? row.ts - backdateMin * 60_000 : null;
+      })();
       return {
         id: row.id,
         kind: row.kind,
@@ -263,35 +293,17 @@ function main() {
         signals, // e.g. ['gap', 'bunching']
         evidence: row._evidence ?? null,
         ts: row.ts,
+        // Inferred disruption start for absence-style observations, back-dated
+        // from `ts` by the observed cold gap (see onsetTs above). Null when the
+        // start wasn't inferred — consumers then fall back to `ts`. Kept as a
+        // distinct field so `ts` always matches the post_url's actual post time.
+        onset_ts: onsetTs,
         resolved_ts: row.resolved_ts ?? null,
-        // For absence-style observations (pulse-cold, thin-gap), `ts` is when
-        // the bot *posted* — the corridor was already cold before that.
-        // Back-date the start so the reported duration reflects the actual
-        // disruption length, not just the post-to-resolve window.
-        //
-        // Prefer `minutesSinceLastTrain` (what was actually observed at post
-        // time) over `coldThresholdMin` (the detector's minimum) — when the
-        // corridor has been cold longer than the threshold, the threshold
-        // would under-count. Roundups don't carry observation-level evidence,
-        // so dig into bullets for the constituent pulse-cold / thin-gap pick.
-        duration_ms: (() => {
-          if (row.resolved_ts == null) return null;
-          const coldSources = new Set(['pulse-cold', 'thin-gap']);
-          let backdateMin = null;
-          if (row._evidence && coldSources.has(detectionSource)) {
-            backdateMin =
-              row._evidence.minutesSinceLastTrain ?? row._evidence.coldThresholdMin ?? null;
-          } else if (Array.isArray(row._bullets)) {
-            for (const b of row._bullets) {
-              if (!coldSources.has(b?.source)) continue;
-              const d = b.detail || {};
-              const m = d.minutesSinceLastTrain ?? d.coldThresholdMin ?? null;
-              if (m != null && (backdateMin == null || m > backdateMin)) backdateMin = m;
-            }
-          }
-          const startTs = backdateMin != null ? row.ts - backdateMin * 60_000 : row.ts;
-          return row.resolved_ts - startTs;
-        })(),
+        // duration_ms reconciles with the published timestamps:
+        //   resolved_ts - (onset_ts ?? ts)
+        // so a consumer that subtracts the start from resolved_ts gets the same
+        // number. Null while still active.
+        duration_ms: row.resolved_ts != null ? row.resolved_ts - (onsetTs ?? row.ts) : null,
         active: row.resolved_ts == null,
         post_url: atUriToUrl(row.post_uri),
         resolved_post_url: atUriToUrl(row.resolved_post_uri),
