@@ -392,6 +392,12 @@ function db() {
   if (!roundupCols.includes('pending_resolved_ts')) {
     _db.exec('ALTER TABLE roundup_anchors ADD COLUMN pending_resolved_ts INTEGER');
   }
+  // Structured per-source bullets the post composed from, as JSON:
+  // [{source, detail}]. meta_signals roll off at 48h, so this lets the web
+  // export render the same bullets on the event page indefinitely.
+  if (!roundupCols.includes('bullets')) {
+    _db.exec('ALTER TABLE roundup_anchors ADD COLUMN bullets TEXT');
+  }
   const threadQuoteCols = _db
     .prepare('PRAGMA table_info(thread_quote_posts)')
     .all()
@@ -726,16 +732,19 @@ function recordRoundupAnchor({
   postCid,
   ts,
   signals,
+  bullets,
   ttlMs = 2 * 60 * 60 * 1000,
 }) {
   // signals: array of source strings, e.g. ['gap', 'bunching']
+  // bullets: structured picks the post composed from — [{source, detail}]
   const signalsStr = signals && signals.length > 0 ? [...new Set(signals)].join(',') : null;
+  const bulletsStr = bullets && bullets.length > 0 ? JSON.stringify(bullets) : null;
   db()
     .prepare(`
-      INSERT OR REPLACE INTO roundup_anchors (kind, line, post_uri, post_cid, ts, expires_ts, signals)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT OR REPLACE INTO roundup_anchors (kind, line, post_uri, post_cid, ts, expires_ts, signals, bullets)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `)
-    .run(kind, String(line), postUri, postCid || null, ts, ts + ttlMs, signalsStr);
+    .run(kind, String(line), postUri, postCid || null, ts, ts + ttlMs, signalsStr, bulletsStr);
 }
 
 function listActiveRoundupAnchors(kind, now = Date.now()) {

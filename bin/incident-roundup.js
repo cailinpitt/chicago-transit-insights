@@ -31,6 +31,7 @@ const {
 } = require('../src/shared/bluesky');
 const { LINE_TO_RAIL_ROUTE } = require('../src/shared/ctaAlerts');
 const { resolvedEventLink } = require('../src/shared/eventLink');
+const { describeSignal } = require('../src/shared/observationDescribe');
 
 const WINDOW_MS = 30 * 60 * 1000;
 const SCORE_THRESHOLD = 1.75;
@@ -92,44 +93,9 @@ function scoreSignals(signals) {
   return { total, bySource, ghostOverride };
 }
 
-function describeSignal(s, kind) {
-  let detail = {};
-  try {
-    detail = s.detail ? JSON.parse(s.detail) : {};
-  } catch (_e) {
-    detail = {};
-  }
-  if (s.source === 'gap') {
-    const ratio = Number.isFinite(detail.ratio) ? `${detail.ratio.toFixed(1)}` : '?';
-    const noun = kind === 'bus' ? 'buses' : 'trains';
-    return `· one gap between ${noun} is ${ratio}x the scheduled wait`;
-  }
-  if (s.source === 'ghost') {
-    const noun = kind === 'bus' ? 'buses' : 'trains';
-    // Round to whole vehicles — "7.3 of 18.3 buses" reads as nonsense to a
-    // rider; the underlying schedule numbers are activeByHour averages, not
-    // counts, but the reader-facing prose should look like a count.
-    const missing = Math.max(0, Math.round(detail.missing || 0));
-    const expected = Math.max(0, Math.round(detail.expected || 0));
-    return `· ${missing} of ${expected} ${noun} missing this past hour`;
-  }
-  if (s.source === 'bunching') {
-    const n = detail.vehicles || '?';
-    const noun = kind === 'bus' ? 'buses' : 'trains';
-    return `· ${n} ${noun} recently bunched together`;
-  }
-  if (s.source === 'pulse-cold' || s.source === 'pulse-held') {
-    const seg =
-      detail.fromStation && detail.toStation ? ` ${detail.fromStation} → ${detail.toStation}` : '';
-    const noun = kind === 'bus' ? 'buses' : 'trains';
-    // Pre-threshold candidates: blackout (cold) = no vehicles seen, held =
-    // vehicles seen but stuck. Couched as "possible/may" because they
-    // haven't yet hit the consecutive-tick bar for a standalone post.
-    if (s.source === 'pulse-held') return `· ${noun} appear stuck in place${seg}`;
-    return `· possible service gap forming${seg}`;
-  }
-  return `· ${s.source}`;
-}
+// describeSignal moved to src/shared/observationDescribe.js so the web
+// export can re-render the same per-signal bullets from roundup_anchors.bullets
+// without duplicating the rendering rules.
 
 // For dedup, "worst" is source-specific. Ghost severity is capped at 1.0 once
 // posted, so picking by `severity` alone treats NB and SB as a tie and picks
@@ -150,17 +116,22 @@ function severityFor(s) {
   return Number.isFinite(s.severity) ? s.severity : 0;
 }
 
-function buildRoundupText({ kind, line, name, signals }) {
-  const label = kind === 'bus' ? `#${line} ${name || line}` : `${lineLabel(line)} Line`;
-  const prefix = kind === 'bus' ? '🚌⚠️' : '🚇⚠️';
-  // One bullet per source, picking the most severe instance per source so a
-  // less-affected direction can't shadow a worse one.
+function pickBestBySource(signals) {
+  // One pick per source, picking the most severe instance so a less-affected
+  // direction can't shadow a worse one.
   const bestBySource = new Map();
   for (const s of signals) {
     const cur = bestBySource.get(s.source);
     if (!cur || severityFor(s) > severityFor(cur)) bestBySource.set(s.source, s);
   }
-  const bullets = [...bestBySource.values()].map((s) => describeSignal(s, kind));
+  return [...bestBySource.values()];
+}
+
+function buildRoundupText({ kind, line, name, signals }) {
+  const label = kind === 'bus' ? `#${line} ${name || line}` : `${lineLabel(line)} Line`;
+  const prefix = kind === 'bus' ? '🚌⚠️' : '🚇⚠️';
+  const picks = pickBestBySource(signals);
+  const bullets = picks.map((s) => describeSignal(s, kind));
   const multi = bullets.length > 1;
   const header = `${prefix} ${label} · ${multi ? 'multiple signals' : 'signal'}`;
   const footer = multi
@@ -238,6 +209,23 @@ async function processKind({ kind, identifiers, getName, agentGetter, now }) {
       // boundary even when the underlying detectors saw the problem
       // minutes earlier.
       const earliestSignalTs = signals.reduce((m, s) => (s.ts < m ? s.ts : m), now);
+      // bullets: structured per-source picks the post composed from. Persisted
+      // so the cta-alert-history event page can re-render the same bullets via
+      // describeBotEvidenceBullets — meta_signals roll off at 48h, so we can't
+      // re-derive them at export time.
+      const bullets = pickBestBySource(signals).map((s) => {
+        let detail = null;
+        try {
+          detail = s.detail
+            ? typeof s.detail === 'string'
+              ? JSON.parse(s.detail)
+              : s.detail
+            : null;
+        } catch (_e) {
+          detail = null;
+        }
+        return { source: s.source, detail };
+      });
       recordRoundupAnchor({
         kind,
         line: id,
@@ -245,6 +233,7 @@ async function processKind({ kind, identifiers, getName, agentGetter, now }) {
         postCid: result.cid,
         ts: earliestSignalTs,
         signals: signals.map((s) => s.source),
+        bullets,
       });
       const ids = signals.map((s) => s.id);
       if (ids.length > 0) {

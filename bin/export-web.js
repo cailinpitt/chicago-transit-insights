@@ -18,6 +18,7 @@ const Database = require('better-sqlite3');
 const {
   describeBotObservation,
   describeBotResolution,
+  describeBotEvidenceBullets,
 } = require('../src/shared/observationDescribe');
 
 const DB_PATH =
@@ -122,7 +123,7 @@ function main() {
   // Multi-signal roundup posts (stored separately in roundup_anchors).
   const roundupObservations = db
     .prepare(
-      `SELECT id, kind, line, ts, post_uri, resolved_ts, resolution_post_uri AS resolved_post_uri, signals
+      `SELECT id, kind, line, ts, post_uri, resolved_ts, resolution_post_uri AS resolved_post_uri, signals, bullets AS bullets_json
        FROM roundup_anchors
        ORDER BY ts DESC`,
     )
@@ -168,6 +169,7 @@ function main() {
       to_station: null,
       _source: 'roundup',
       // signals is already on row as a comma-separated string
+      _bullets: parseEvidence(row.bullets_json),
     })),
   ].sort((a, b) => b.ts - a.ts);
 
@@ -240,10 +242,16 @@ function main() {
         line: row.line,
         detection_source: detectionSource,
         signals,
+        // Roundups: structured per-source picks from roundup_anchors.bullets.
+        // Pulse-* / thin-gap: full evidence JSON from disruption_events.evidence.
+        // describeBotEvidenceBullets reads whichever is appropriate.
+        bullets: row._bullets ?? null,
+        evidence: row._evidence ?? null,
       };
       const botDescription = describeBotObservation(describeShape);
       const botResolvedDescription =
         row.resolved_ts != null ? describeBotResolution(describeShape) : null;
+      const botEvidenceBullets = describeBotEvidenceBullets(describeShape);
       return {
         id: row.id,
         kind: row.kind,
@@ -271,6 +279,12 @@ function main() {
         resolved_post_url: atUriToUrl(row.resolved_post_uri),
         bot_description: botDescription,
         bot_resolved_description: botResolvedDescription,
+        // Concrete per-signal bullets pulled from the bluesky post body.
+        // Omitted (undefined) when none — keeps the export lean and lets the
+        // renderer treat absent and empty the same.
+        ...(botEvidenceBullets && botEvidenceBullets.length > 0
+          ? { bot_evidence_bullets: botEvidenceBullets }
+          : {}),
       };
     }),
   };

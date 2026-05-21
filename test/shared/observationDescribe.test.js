@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const {
   describeBotObservation,
   describeBotResolution,
+  describeBotEvidenceBullets,
 } = require('../../src/shared/observationDescribe');
 
 test('describeBotObservation: roundup on a train line with multiple signals', () => {
@@ -129,4 +130,82 @@ test('describeBotResolution: null for alerts/merged', () => {
 
 test('describeBotResolution: null when no signals', () => {
   assert.equal(describeBotResolution({ kind: 'bus', line: '49' }), null);
+});
+
+test('describeBotEvidenceBullets: roundup renders persisted bullets without leading bullet glyph', () => {
+  const out = describeBotEvidenceBullets({
+    kind: 'bus',
+    line: '8',
+    detection_source: 'roundup',
+    bullets: [
+      { source: 'gap', detail: { ratio: 5.0 } },
+      { source: 'bunching', detail: { vehicles: 5 } },
+    ],
+  });
+  assert.deepEqual(out, [
+    'One gap between buses is 5.0x the scheduled wait',
+    '5 buses recently bunched together',
+  ]);
+});
+
+test('describeBotEvidenceBullets: roundup with stringified detail (DB shape) parses it', () => {
+  const out = describeBotEvidenceBullets({
+    kind: 'train',
+    line: 'red',
+    detection_source: 'roundup',
+    bullets: [{ source: 'gap', detail: JSON.stringify({ ratio: 3.2 }) }],
+  });
+  assert.deepEqual(out, ['One gap between trains is 3.2x the scheduled wait']);
+});
+
+test('describeBotEvidenceBullets: pulse-cold renders one bullet from evidence', () => {
+  const out = describeBotEvidenceBullets({
+    kind: 'train',
+    line: 'p',
+    detection_source: 'pulse-cold',
+    evidence: {
+      runLengthMi: 5.9,
+      coldStations: 2,
+      lookbackMin: 33,
+      headwayMin: 11,
+      expectedTrains: 2,
+      trainsOutsideRun: 5,
+    },
+  });
+  assert.equal(out.length, 1);
+  assert.ok(out[0].includes('5.9-mi stretch'));
+  assert.ok(out[0].includes('2 stations affected'));
+  assert.ok(out[0].includes('scheduled every 11 min'));
+  assert.ok(out[0].includes('~2 trains missed'));
+  assert.ok(out[0].includes('5 trains still moving elsewhere'));
+});
+
+test('describeBotEvidenceBullets: pulse-held renders held-train bullet', () => {
+  const out = describeBotEvidenceBullets({
+    kind: 'train',
+    line: 'red',
+    detection_source: 'pulse-held',
+    evidence: {
+      held: { trainCount: 2, stationaryMs: 12 * 60 * 1000 },
+      coldStationNames: ['Garfield', 'Sox-35th'],
+    },
+  });
+  assert.deepEqual(out, ['2 trains stationary 12+ min near Garfield, Sox-35th.']);
+});
+
+test('describeBotEvidenceBullets: null when source unrecognized or evidence missing', () => {
+  assert.equal(describeBotEvidenceBullets(null), null);
+  assert.equal(
+    describeBotEvidenceBullets({ kind: 'train', line: 'red', detection_source: 'pulse-cold' }),
+    null,
+  );
+  assert.equal(
+    describeBotEvidenceBullets({
+      kind: 'train',
+      line: 'red',
+      detection_source: 'roundup',
+      bullets: [],
+    }),
+    null,
+  );
 });

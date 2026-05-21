@@ -150,9 +150,129 @@ function describeBotResolution(incident) {
   return `${noun} ${verb} on ${article}${place}, service appears to be back to normal.`;
 }
 
+// Per-signal bullet text for the roundup post body. Moved here from
+// bin/incident-roundup.js so the post composer and the web export share one
+// renderer — the roundup_anchors.bullets column stores raw {source, detail}
+// picks, and the event page re-runs this to render them as a <ul>. Keep the
+// leading "· " prefix: the bluesky post still depends on it (and existing
+// tests assert it), and the web renderer strips it before rendering as a list.
+function describeSignal(s, kind) {
+  let detail = {};
+  try {
+    detail = s.detail ? (typeof s.detail === 'string' ? JSON.parse(s.detail) : s.detail) : {};
+  } catch (_e) {
+    detail = {};
+  }
+  if (s.source === 'gap') {
+    const ratio = Number.isFinite(detail.ratio) ? `${detail.ratio.toFixed(1)}` : '?';
+    const noun = kind === 'bus' ? 'buses' : 'trains';
+    return `· one gap between ${noun} is ${ratio}x the scheduled wait`;
+  }
+  if (s.source === 'ghost') {
+    const noun = kind === 'bus' ? 'buses' : 'trains';
+    const missing = Math.max(0, Math.round(detail.missing || 0));
+    const expected = Math.max(0, Math.round(detail.expected || 0));
+    return `· ${missing} of ${expected} ${noun} missing this past hour`;
+  }
+  if (s.source === 'bunching') {
+    const n = detail.vehicles || '?';
+    const noun = kind === 'bus' ? 'buses' : 'trains';
+    return `· ${n} ${noun} recently bunched together`;
+  }
+  if (s.source === 'pulse-cold' || s.source === 'pulse-held') {
+    const seg =
+      detail.fromStation && detail.toStation ? ` ${detail.fromStation} → ${detail.toStation}` : '';
+    const noun = kind === 'bus' ? 'buses' : 'trains';
+    if (s.source === 'pulse-held') return `· ${noun} appear stuck in place${seg}`;
+    return `· possible service gap forming${seg}`;
+  }
+  return `· ${s.source}`;
+}
+
+// Web-side bullet renderer. For roundup observations, the persisted
+// `bullets` column carries [{source, detail}] picks straight from the post
+// composer; for pulse-* / thin-gap observations we synthesize a single
+// bullet from the existing `evidence` JSON so event pages get the same
+// concrete numbers the bluesky post showed. Returns an array of strings
+// without the bluesky "· " prefix — the page renders them as <ul>.
+function describeBotEvidenceBullets(incident) {
+  if (!incident) return null;
+  if (isMergedOrAlert(incident)) return null;
+  // Strip the bluesky "· " bullet glyph, then sentence-case the leading letter.
+  // The post intentionally reads lowercase after "· " (it's a bullet item, not a
+  // sentence); on the web page each bullet stands alone, so capital reads right.
+  const cleanBullet = (s) => {
+    if (typeof s !== 'string') return s;
+    const stripped = s.replace(/^·\s*/, '');
+    return stripped.length > 0 ? stripped[0].toUpperCase() + stripped.slice(1) : stripped;
+  };
+  const kind = incident.kind === 'bus' ? 'bus' : 'train';
+
+  if (incident.detection_source === 'roundup') {
+    const bullets = incident.bullets;
+    if (!Array.isArray(bullets) || bullets.length === 0) return null;
+    const out = bullets.map((b) => cleanBullet(describeSignal(b, kind))).filter(Boolean);
+    return out.length > 0 ? out : null;
+  }
+
+  const evidence = incident.evidence;
+  if (!evidence) return null;
+
+  if (incident.detection_source === 'pulse-cold' || incident.detection_source === 'thin-gap') {
+    const headwayClause =
+      evidence.headwayMin != null
+        ? ` — scheduled every ${Math.round(evidence.headwayMin)} min`
+        : '';
+    if (evidence.synthetic) {
+      const stations =
+        evidence.coldStations >= 2 ? ` (${evidence.coldStations} stations affected)` : '';
+      return [
+        `No trains observed anywhere on the line in the last ${evidence.lookbackMin || 20} min${stations}${headwayClause}.`,
+      ];
+    }
+    const stretch = evidence.runLengthMi != null ? `${evidence.runLengthMi}-mi stretch` : 'stretch';
+    const stations =
+      evidence.coldStations >= 2
+        ? ` (${evidence.coldStations} station${evidence.coldStations === 1 ? '' : 's'} affected)`
+        : '';
+    const since =
+      evidence.minutesSinceLastTrain != null
+        ? `the last ${evidence.minutesSinceLastTrain} min`
+        : `the last ${evidence.lookbackMin || 20} min`;
+    const missing =
+      evidence.expectedTrains != null && evidence.expectedTrains >= 1
+        ? `, ~${evidence.expectedTrains} ${kind === 'bus' ? 'bus' : 'train'}${evidence.expectedTrains === 1 ? '' : 's'} missed`
+        : '';
+    const elsewhere =
+      evidence.trainsOutsideRun != null
+        ? ` (${evidence.trainsOutsideRun} ${kind === 'bus' ? 'bus' : 'train'}${evidence.trainsOutsideRun === 1 ? '' : 's'} still moving elsewhere on the line)`
+        : '';
+    return [
+      `No ${kind === 'bus' ? 'buses' : 'trains'} moved through this ${stretch}${stations} in ${since}${headwayClause}${missing}${elsewhere}.`,
+    ];
+  }
+
+  if (incident.detection_source === 'pulse-held' && evidence.held) {
+    const minutes = Math.round((evidence.held.stationaryMs || 0) / 60000);
+    const noun = kind === 'bus' ? 'bus' : 'train';
+    const plural = evidence.held.trainCount === 1 ? '' : 's';
+    const stationsList =
+      evidence.coldStationNames && evidence.coldStationNames.length > 0
+        ? ` near ${evidence.coldStationNames.slice(0, 3).join(', ')}`
+        : '';
+    return [
+      `${evidence.held.trainCount} ${noun}${plural} stationary ${minutes}+ min${stationsList}.`,
+    ];
+  }
+
+  return null;
+}
+
 module.exports = {
   describeBotObservation,
   describeBotResolution,
+  describeSignal,
+  describeBotEvidenceBullets,
   observationSignals,
   TRAIN_LINES,
   normalizeTrainLine,
