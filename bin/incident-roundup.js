@@ -141,7 +141,16 @@ function buildRoundupText({ kind, line, name, signals }) {
 }
 
 async function processKind({ kind, identifiers, getName, agentGetter, now }) {
+  // One open roundup per route/line at a time. The cooldown alone only spaces
+  // re-posts an hour apart, so a route degraded for >1h spawns a fresh anchor
+  // every cooldown lapse, each rendering as a separate live incident. An
+  // unresolved anchor already represents the ongoing incident; the resolution
+  // sweep closes it once signals quiet.
+  const openAnchorLines = new Set(
+    listUnresolvedRoundupAnchors(kind).map((row) => String(row.line)),
+  );
   for (const id of identifiers) {
+    if (openAnchorLines.has(String(id))) continue;
     const signals = getRecentMetaSignals({ kind, line: id, withinMs: WINDOW_MS }, now);
     if (signals.length === 0) continue;
     const { total, bySource, ghostOverride } = scoreSignals(signals);
