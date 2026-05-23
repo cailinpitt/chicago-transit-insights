@@ -11,7 +11,7 @@ const {
   HEIGHT,
   TWEMOJI_TRAIN_INNER,
   buildTurnaroundMarker,
-  buildNumberBadge,
+  markerLabelChip,
   buildCometTrail,
   buildClipProgress,
   TWEMOJI_HOUSE_INNER,
@@ -340,16 +340,7 @@ function buildTrainOverlaySvg(
   );
 
   const iconSize = TRAIN_MARKER_RADIUS * 1.6;
-  const badge = (x, y, label) =>
-    label != null
-      ? buildNumberBadge(
-          x + TRAIN_MARKER_RADIUS * 0.66,
-          y - TRAIN_MARKER_RADIUS * 0.66,
-          TRAIN_MARKER_RADIUS * 0.5,
-          label,
-        )
-      : '';
-  const trainMarkers = trainPixels.map(({ x, y, ghost, turnaround, opacity, label }) => {
+  const trainMarkers = trainPixels.map(({ x, y, ghost, turnaround, opacity }) => {
     if (turnaround) {
       return buildTurnaroundMarker({
         x,
@@ -357,7 +348,6 @@ function buildTrainOverlaySvg(
         radius: TRAIN_MARKER_RADIUS,
         color: lineColor,
         opacity,
-        label,
       });
     }
     const iconX = x - iconSize / 2;
@@ -367,10 +357,14 @@ function buildTrainOverlaySvg(
     const body = [
       `<circle cx="${x}" cy="${y}" r="${TRAIN_MARKER_RADIUS}" fill="#${fill}" stroke="#fff" stroke-width="4"${dashAttr}/>`,
       `<svg x="${iconX}" y="${iconY}" width="${iconSize}" height="${iconSize}" viewBox="0 0 36 36">${TWEMOJI_TRAIN_INNER}</svg>`,
-      badge(x, y, label),
     ].join('');
     return ghost ? `<g opacity="${opacity}">${body}</g>` : body;
   });
+  // Identity chips in their own layer ABOVE every disc, so an overlapping train
+  // can never bury another train's number.
+  const chipElements = trainPixels.map(({ x, y, label }) =>
+    markerLabelChip(x, y, TRAIN_MARKER_RADIUS, label),
+  );
 
   // Direction-of-travel arrow in the top-right corner.
   const arrows = [];
@@ -432,6 +426,7 @@ function buildTrainOverlaySvg(
     ...trailElements,
     ...halos,
     ...trainMarkers,
+    ...chipElements,
     ...arrows,
     ...legendElements,
     ...progressElements,

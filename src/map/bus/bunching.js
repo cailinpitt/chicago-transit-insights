@@ -14,6 +14,7 @@ const {
   TWEMOJI_FLAG_INNER,
   buildBusMarker,
   buildTurnaroundMarker,
+  markerLabelChip,
   buildCometTrail,
   buildClipProgress,
   buildGhostLegend,
@@ -243,7 +244,6 @@ async function renderBunchingFrame(view, baseMap, vehicles, signals = [], stops 
   };
   const buildMarker = (v, i) => {
     const { x, y } = markerPixels[i];
-    const label = labels ? (labels.get(v?.vid) ?? null) : null;
     if (v?.turnaround === true) {
       return buildTurnaroundMarker({
         x,
@@ -251,7 +251,6 @@ async function renderBunchingFrame(view, baseMap, vehicles, signals = [], stops 
         radius: BUS_MARKER_RADIUS,
         color: BUS_COLOR,
         opacity: v?.opacity ?? 1,
-        label,
       });
     }
     return buildBusMarker({
@@ -262,7 +261,6 @@ async function renderBunchingFrame(view, baseMap, vehicles, signals = [], stops 
       articulated: isArticulated(v?.vid),
       ghost: v?.ghost === true,
       opacity: v?.opacity ?? 1,
-      label,
     });
   };
   // Paint each bus as a trail+disc unit, rear-to-front (lead bus, highest pdist,
@@ -273,6 +271,18 @@ async function renderBunchingFrame(view, baseMap, vehicles, signals = [], stops 
     .map((v, i) => ({ pdist: parseFloat(v?.pdist) || Number.NEGATIVE_INFINITY, v, i }))
     .sort((a, b) => a.pdist - b.pdist)
     .map(({ v, i }) => buildTrail(v, i) + buildMarker(v, i));
+  // Identity chips in their own layer ABOVE every disc, so an overlapping bus
+  // can never bury another bus's number.
+  const chipLayer = labels
+    ? vehicles.map((v, i) =>
+        markerLabelChip(
+          markerPixels[i].x,
+          markerPixels[i].y,
+          BUS_MARKER_RADIUS,
+          labels.get(v?.vid) ?? null,
+        ),
+      )
+    : [];
   const arrowElements = [buildDirectionArrow(WIDTH - 220, 180, view.bearingDeg)];
   // Ghost legend: top-left corner, only when this clip contains tail-dropped
   // vehicles. The arrow lives top-right; legend top-left so they don't fight.
@@ -305,7 +315,7 @@ async function renderBunchingFrame(view, baseMap, vehicles, signals = [], stops 
     ? [buildClipProgress({ ...opts.clock, width: WIDTH, height: HEIGHT })]
     : [];
 
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${WIDTH}" height="${HEIGHT}">${signalElements.join('\n')}${stopElements.join('\n')}${terminalElements.join('\n')}${vehicleLayer.join('\n')}${arrowElements.join('\n')}${legendElements.join('\n')}${progressElements.join('\n')}</svg>`;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${WIDTH}" height="${HEIGHT}">${signalElements.join('\n')}${stopElements.join('\n')}${terminalElements.join('\n')}${vehicleLayer.join('\n')}${chipLayer.join('\n')}${arrowElements.join('\n')}${legendElements.join('\n')}${progressElements.join('\n')}</svg>`;
   return sharp(baseMap)
     .resize(WIDTH, HEIGHT)
     .composite([{ input: Buffer.from(svg), top: 0, left: 0 }])

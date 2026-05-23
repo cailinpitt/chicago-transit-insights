@@ -149,16 +149,7 @@ const ARTIC_MARKER_COLOR = 'c026ff';
 // Bus marker. Articulated buses get both a distinct glyph (two coach
 // segments + bellows + 3 axles) and a deeper background color. `articulated`
 // is optional; omitting it yields the standard fleet marker.
-function buildBusMarker({
-  x,
-  y,
-  radius,
-  color,
-  articulated = false,
-  ghost = false,
-  opacity = 1,
-  label = null,
-}) {
+function buildBusMarker({ x, y, radius, color, articulated = false, ghost = false, opacity = 1 }) {
   const size = radius * 1.6;
   const inner = articulated ? ARTIC_BUS_INNER : TWEMOJI_BUS_INNER;
   // Ghost = "lost-signal" rendering for buses the API stopped reporting
@@ -168,17 +159,24 @@ function buildBusMarker({
   const dashAttr = ghost ? ' stroke-dasharray="6 4"' : '';
   const opacityAttr = ghost ? ` opacity="${opacity}"` : '';
   // Layer order: fill circle → bus glyph → white stroke ring on top, so the
-  // ring crisply frames the bus instead of being clipped beneath it. The
-  // identity badge sits last so the number is never clipped by the ring.
+  // ring crisply frames the bus instead of being clipped beneath it. Identity
+  // chips are drawn by the caller in a separate top layer (see
+  // markerLabelLayer) so an overlapping disc can never bury another bus's chip.
   const body = [
     `<circle cx="${x}" cy="${y}" r="${radius}" fill="#${fill}"/>`,
     `<svg x="${x - size / 2}" y="${y - size / 2}" width="${size}" height="${size}" viewBox="0 0 36 36">${inner}</svg>`,
     `<circle cx="${x}" cy="${y}" r="${radius}" fill="none" stroke="#fff" stroke-width="4"${dashAttr}/>`,
-    label != null
-      ? buildNumberBadge(x + radius * 0.66, y - radius * 0.66, radius * 0.5, label)
-      : '',
   ].join('');
   return ghost || opacity < 1 ? `<g${opacityAttr || ` opacity="${opacity}"`}>${body}</g>` : body;
+}
+
+// Identity chip placed at a marker's upper-right. Returns '' when no label.
+// Render these in a layer ABOVE all markers so an overlapping disc never hides
+// a neighbor's chip.
+function markerLabelChip(x, y, radius, label) {
+  return label != null
+    ? buildNumberBadge(x + radius * 0.66, y - radius * 0.66, radius * 0.5, label)
+    : '';
 }
 
 // Small numbered badge clipped to a marker's upper-right so each vehicle has a
@@ -228,7 +226,7 @@ async function buildGhostLegend(x, y) {
 // — viewers shouldn't read "we lost track" when the vehicle simply reached
 // its terminal. A loop-arrow glyph in the route color says "arrived, turning
 // around" instead.
-function buildTurnaroundMarker({ x, y, radius, color, opacity = 1, label = null }) {
+function buildTurnaroundMarker({ x, y, radius, color, opacity = 1 }) {
   const iconSize = radius * 1.4;
   const iconX = x - iconSize / 2;
   const iconY = y - iconSize / 2;
@@ -248,9 +246,6 @@ function buildTurnaroundMarker({ x, y, radius, color, opacity = 1, label = null 
     `<circle cx="${x}" cy="${y}" r="${radius}" fill="#${color}"/>`,
     `<svg x="${iconX}" y="${iconY}" width="${iconSize}" height="${iconSize}" viewBox="0 0 36 36">${glyph}</svg>`,
     `<circle cx="${x}" cy="${y}" r="${radius}" fill="none" stroke="#fff" stroke-width="4"/>`,
-    label != null
-      ? buildNumberBadge(x + radius * 0.66, y - radius * 0.66, radius * 0.5, label)
-      : '',
   ].join('');
   return opacity < 1 ? `<g opacity="${opacity.toFixed(3)}">${body}</g>` : body;
 }
@@ -466,6 +461,7 @@ module.exports = {
   buildBusMarker,
   buildTurnaroundMarker,
   buildNumberBadge,
+  markerLabelChip,
   buildCometTrail,
   buildClipProgress,
   buildGhostLegend,
