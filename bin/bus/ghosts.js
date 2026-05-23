@@ -36,7 +36,10 @@ function formatLine(event) {
   const dir = abbreviateDirection(event.direction);
   const missing = Math.round(event.missing);
   const expected = Math.round(event.expectedActive);
-  const pct = Math.round((event.missing / event.expectedActive) * 100);
+  // Derive the percentage from the rounded counts shown, not the raw fractional
+  // hourly averages — otherwise the displayed "X of Y" and "(Z%)" disagree
+  // (e.g. 4 of 11 reading 33% instead of 36%).
+  const pct = expected > 0 ? Math.round((missing / expected) * 100) : 0;
   // Headway can be null mid-route-coverage hours; shorter sentence then.
   if (event.headway == null) {
     return `🚌 ${title} ${dir} · ${missing} of ${expected} missing (${pct}%)`;

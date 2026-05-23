@@ -30,7 +30,9 @@ function formatLine(event) {
   const emoji = LINE_EMOJI[event.line];
   const missing = Math.round(event.missing);
   const expected = Math.round(event.expectedActive);
-  const pct = Math.round((event.missing / event.expectedActive) * 100);
+  // Derive the percentage from the rounded counts shown, not the raw fractional
+  // hourly averages — otherwise the displayed "X of Y" and "(Z%)" disagree.
+  const pct = expected > 0 ? Math.round((missing / expected) * 100) : 0;
   const dest = event.destination ? ` → ${event.destination}` : '';
   if (event.headway == null) {
     return `${emoji} ${lineName} Line${dest} · ${missing} of ${expected} missing (${pct}%)`;
