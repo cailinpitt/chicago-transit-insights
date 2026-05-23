@@ -82,4 +82,26 @@ function detectBunching(vehicles, now = new Date()) {
   return all[0] || null;
 }
 
-module.exports = { detectAllBunching, detectBunching, BUNCHING_THRESHOLD_FT };
+// The rider-facing cost of a bunch is the gap it leaves behind it. Find the
+// nearest bus following the bunch on the same pattern and report how far back
+// it is (and, if a scheduled trip time is known, roughly how long until it
+// arrives at scheduled pace). Returns null when nothing is following — the
+// bunch is the back of the line, so there's no trailing gap to describe.
+function computeGapBehind({ vehicles, pid, bunchVehicles, lengthFt, tripMinutes }) {
+  const bunchVids = new Set(bunchVehicles.map((v) => v.vid));
+  const trailingPdist = Math.min(...bunchVehicles.map((v) => parseFloat(v.pdist)));
+  let follower = null;
+  for (const v of vehicles) {
+    if (v.pid !== pid || bunchVids.has(v.vid)) continue;
+    const pdist = parseFloat(v.pdist);
+    if (!Number.isFinite(pdist) || pdist >= trailingPdist) continue;
+    if (!follower || pdist > follower.pdist) follower = { vid: v.vid, pdist };
+  }
+  if (!follower) return null;
+  const distFt = Math.round(trailingPdist - follower.pdist);
+  const minutes =
+    lengthFt > 0 && tripMinutes > 0 ? Math.round((distFt / lengthFt) * tripMinutes) : null;
+  return { distFt, minutes, followerVid: follower.vid };
+}
+
+module.exports = { detectAllBunching, detectBunching, computeGapBehind, BUNCHING_THRESHOLD_FT };

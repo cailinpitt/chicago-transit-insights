@@ -22,7 +22,15 @@ function buildPostText(bunch, pattern, stop, callouts = [], opts = {}) {
         opts.previousRecord != null ? ` (was ${opts.previousRecord})` : ''
       }`
     : '';
-  const base = `🚌 ${title} — ${pattern.direction}\n\n${bunch.vehicles.length} buses within ${formatDistance(bunch.spanFt)} near ${stop.stopName}${recordLine}${busesLine}`;
+  // The gap the bunch leaves behind it is the rider-facing cost — the wait the
+  // next person at the stop faces. Distance always; estimated minutes when a
+  // scheduled pace is known.
+  const gapLine = opts.gapBehind
+    ? `\n\nNext bus ${formatDistance(opts.gapBehind.distFt)}${
+        opts.gapBehind.minutes != null ? ` / ~${opts.gapBehind.minutes} min` : ''
+      } behind`
+    : '';
+  const base = `🚌 ${title} — ${pattern.direction}\n\n${bunch.vehicles.length} buses within ${formatDistance(bunch.spanFt)} near ${stop.stopName}${recordLine}${gapLine}${busesLine}`;
   const tail = formatCallouts(callouts);
   return tail ? `${base}\n\n${tail}` : base;
 }

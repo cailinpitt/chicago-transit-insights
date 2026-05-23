@@ -14,6 +14,8 @@ const {
   TWEMOJI_FLAG_INNER,
   buildBusMarker,
   buildTurnaroundMarker,
+  buildCometTrail,
+  buildClipProgress,
   buildGhostLegend,
   buildTerminalMarker,
   buildStopMarker,
@@ -225,14 +227,31 @@ async function renderBunchingFrame(view, baseMap, vehicles, signals = [], stops 
   const markerPixels = separateMarkers(rawMarkerPixels, BUS_MARKER_RADIUS * 2 + 4, {
     axis: perpendicularFromBearing(view.bearingDeg),
   });
-  const markerElements = markerPixels.map(({ x, y }, i) => {
-    if (vehicles[i]?.turnaround === true) {
+  const labels = opts.labels || null;
+  // Comet trails (video only): a vehicle carries a `.trail` of recent lat/lons.
+  // Project each, then shift by the same nudge the disc got from separateMarkers
+  // so the streak stays attached to its (possibly nudged) marker head.
+  const buildTrail = (v, i) => {
+    if (!v.trail || v.trail.length < 2) return '';
+    const dx = markerPixels[i].x - rawMarkerPixels[i].x;
+    const dy = markerPixels[i].y - rawMarkerPixels[i].y;
+    const pts = v.trail.map((pt) => {
+      const p = project(pt.lat, pt.lon, view.centerLat, view.centerLon, view.zoom, WIDTH, HEIGHT);
+      return { x: p.x + dx, y: p.y + dy };
+    });
+    return buildCometTrail(pts);
+  };
+  const buildMarker = (v, i) => {
+    const { x, y } = markerPixels[i];
+    const label = labels ? (labels.get(v?.vid) ?? null) : null;
+    if (v?.turnaround === true) {
       return buildTurnaroundMarker({
         x,
         y,
         radius: BUS_MARKER_RADIUS,
         color: BUS_COLOR,
-        opacity: vehicles[i]?.opacity ?? 1,
+        opacity: v?.opacity ?? 1,
+        label,
       });
     }
     return buildBusMarker({
@@ -240,11 +259,20 @@ async function renderBunchingFrame(view, baseMap, vehicles, signals = [], stops 
       y,
       radius: BUS_MARKER_RADIUS,
       color: BUS_COLOR,
-      articulated: isArticulated(vehicles[i]?.vid),
-      ghost: vehicles[i]?.ghost === true,
-      opacity: vehicles[i]?.opacity ?? 1,
+      articulated: isArticulated(v?.vid),
+      ghost: v?.ghost === true,
+      opacity: v?.opacity ?? 1,
+      label,
     });
-  });
+  };
+  // Paint each bus as a trail+disc unit, rear-to-front (lead bus, highest pdist,
+  // drawn last/on top). A front bus's trail runs back through the buses behind
+  // it; drawing front buses last keeps their trails from being buried under the
+  // rear discs — otherwise only the rearmost buses' trails are ever visible.
+  const vehicleLayer = vehicles
+    .map((v, i) => ({ pdist: parseFloat(v?.pdist) || Number.NEGATIVE_INFINITY, v, i }))
+    .sort((a, b) => a.pdist - b.pdist)
+    .map(({ v, i }) => buildTrail(v, i) + buildMarker(v, i));
   const arrowElements = [buildDirectionArrow(WIDTH - 220, 180, view.bearingDeg)];
   // Ghost legend: top-left corner, only when this clip contains tail-dropped
   // vehicles. The arrow lives top-right; legend top-left so they don't fight.
@@ -272,7 +300,12 @@ async function renderBunchingFrame(view, baseMap, vehicles, signals = [], stops 
     terminalElements.push(...buildTerminalMarker(x, y, TERMINAL_MARKER_RADIUS, glyph));
   }
 
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${WIDTH}" height="${HEIGHT}">${signalElements.join('\n')}${stopElements.join('\n')}${terminalElements.join('\n')}${markerElements.join('\n')}${arrowElements.join('\n')}${legendElements.join('\n')}</svg>`;
+  // Clip progress bar + elapsed clock (video frames pass opts.clock).
+  const progressElements = opts.clock
+    ? [buildClipProgress({ ...opts.clock, width: WIDTH, height: HEIGHT })]
+    : [];
+
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${WIDTH}" height="${HEIGHT}">${signalElements.join('\n')}${stopElements.join('\n')}${terminalElements.join('\n')}${vehicleLayer.join('\n')}${arrowElements.join('\n')}${legendElements.join('\n')}${progressElements.join('\n')}</svg>`;
   return sharp(baseMap)
     .resize(WIDTH, HEIGHT)
     .composite([{ input: Buffer.from(svg), top: 0, left: 0 }])
@@ -280,10 +313,12 @@ async function renderBunchingFrame(view, baseMap, vehicles, signals = [], stops 
     .toBuffer();
 }
 
-async function renderBunchingMap(bunch, pattern, signals = [], stops = []) {
+async function renderBunchingMap(bunch, pattern, signals = [], stops = [], opts = {}) {
   const view = computeBunchingView(bunch, pattern);
   const baseMap = await fetchBunchingBaseMap(view);
-  return renderBunchingFrame(view, baseMap, bunch.vehicles, signals, stops);
+  return renderBunchingFrame(view, baseMap, bunch.vehicles, signals, stops, {
+    labels: opts.labels || null,
+  });
 }
 
 module.exports = {

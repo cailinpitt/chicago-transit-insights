@@ -135,6 +135,64 @@ async function captureBunchingVideo(bunch, pattern, opts = {}) {
 
   if (snapshots.length < 2) return null;
 
+  return renderBunchingClip(snapshots, bunch, pattern, {
+    tickMs,
+    interpolate,
+    framerate,
+    signals,
+    stops,
+    turnedAround,
+  });
+}
+
+// Stable per-bus identity: number the bunch by road position (1 = lead bus,
+// furthest along the pattern) so each vid keeps its number across every frame
+// and the static map. Returns Map vid → number.
+function assignBusNumbers(vehicles) {
+  const ordered = [...vehicles].sort((a, b) => (b.pdist ?? 0) - (a.pdist ?? 0));
+  const labels = new Map();
+  for (let i = 0; i < ordered.length; i++) labels.set(ordered[i].vid, i + 1);
+  return labels;
+}
+
+// Attach a comet trail (recent positions, oldest → newest) to each non-parked
+// vehicle in every frame, spanning up to `trailFrames` of prior frames. Pure;
+// mutates frame vehicle objects by setting `.trail`. Turnaround (parked)
+// markers are skipped. Exported for testing.
+function attachTrails(vehicleFrames, trailFrames) {
+  for (let i = 0; i < vehicleFrames.length; i++) {
+    for (const veh of vehicleFrames[i]) {
+      if (veh.turnaround) continue;
+      const start = Math.max(0, i - trailFrames);
+      const trail = [];
+      for (let j = start; j <= i; j++) {
+        const prev = vehicleFrames[j].find((x) => x.vid === veh.vid && !x.turnaround);
+        if (prev) trail.push({ lat: prev.lat, lon: prev.lon });
+      }
+      if (trail.length >= 2) veh.trail = trail;
+    }
+  }
+}
+
+// Real-time window covered by a comet trail. Converted to a frame count via the
+// per-frame real-time spacing (tickMs / interpolate).
+const TRAIL_MS = 75_000;
+
+// Assemble and encode the clip from captured (or reconstructed) snapshots.
+// Split from captureBunchingVideo so it can be driven with historical data.
+async function renderBunchingClip(snapshots, bunch, pattern, opts = {}) {
+  const tickMs = opts.tickMs || DEFAULT_TICK_MS;
+  const interpolate = Math.max(1, opts.interpolate || DEFAULT_INTERPOLATE);
+  const framerate = opts.framerate || DEFAULT_FRAMERATE;
+  const signals = opts.signals || [];
+  const stops = opts.stops || [];
+  const turnedAround = opts.turnedAround || new Map();
+
+  if (snapshots.length < 2) return null;
+
+  // Stable identity for every bunched bus, shared across all frames.
+  const labels = assignBusNumbers(bunch.vehicles);
+
   // Per-vid cleanup: snap to polyline → clamp non-decreasing → smooth.
   // Removes lateral GPS jitter and backward jumps (prediction/GPS swaps).
   const linePts = pattern.points.map((p) => [p.lat, p.lon]);
@@ -178,6 +236,7 @@ async function captureBunchingVideo(bunch, pattern, opts = {}) {
   // Stable vid-sort across frames: API can return vehicles in different
   // orders each tick, which flips the perpendicular nudge in separateMarkers.
   const vehicleFrames = [];
+  const frameTimes = []; // parallel to vehicleFrames: real ts of each frame
   const allVids = [...new Set(snapshots.flatMap((s) => s.vehicles.map((v) => v.vid)))].sort();
 
   // Tail drops: VIDs missing from the final snapshot that the API stopped
@@ -357,6 +416,7 @@ async function captureBunchingVideo(bunch, pattern, opts = {}) {
       const frameTs = snapshots[i].ts + (snapshots[i + 1].ts - snapshots[i].ts) * t;
       vehicles.push(...ghostsAt(frameTs));
       vehicleFrames.push(vehicles);
+      frameTimes.push(frameTs);
     }
   }
   // Final real snapshot → last frame, in the same stable vid order, plus any
@@ -364,6 +424,14 @@ async function captureBunchingVideo(bunch, pattern, opts = {}) {
   const finalFrame = allVids.filter((vid) => finalByVid.has(vid)).map((vid) => finalByVid.get(vid));
   finalFrame.push(...ghostsAt(snapshots[lastSnapIdx].ts));
   vehicleFrames.push(finalFrame);
+  frameTimes.push(videoEndTs);
+
+  // Comet trails: recent path behind each moving bus (~TRAIL_MS of real time).
+  const trailFrames = Math.max(2, Math.round(TRAIL_MS / (tickMs / interpolate)));
+  attachTrails(vehicleFrames, trailFrames);
+
+  const clipStartTs = snapshots[0].ts;
+  const totalSec = Math.max(1, (videoEndTs - clipStartTs) / 1000);
 
   const tmpDir = await Fs.mkdtemp(Path.join(Os.tmpdir(), 'cta-bunch-video-'));
   try {
@@ -372,6 +440,8 @@ async function captureBunchingVideo(bunch, pattern, opts = {}) {
         compactStops: true,
         compactSignals: true,
         showGhostLegend: [...tailDrops.values()].some((d) => !d.turnaroundEnd),
+        labels,
+        clock: { elapsedSec: (frameTimes[i] - clipStartTs) / 1000, totalSec },
       });
       const framePath = Path.join(tmpDir, `frame_${String(i).padStart(3, '0')}.jpg`);
       await Fs.writeFile(framePath, buf);
@@ -424,4 +494,10 @@ async function captureBunchingVideo(bunch, pattern, opts = {}) {
   }
 }
 
-module.exports = { captureBunchingVideo, fillInteriorGaps };
+module.exports = {
+  captureBunchingVideo,
+  renderBunchingClip,
+  fillInteriorGaps,
+  assignBusNumbers,
+  attachTrails,
+};

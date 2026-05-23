@@ -149,7 +149,16 @@ const ARTIC_MARKER_COLOR = 'c026ff';
 // Bus marker. Articulated buses get both a distinct glyph (two coach
 // segments + bellows + 3 axles) and a deeper background color. `articulated`
 // is optional; omitting it yields the standard fleet marker.
-function buildBusMarker({ x, y, radius, color, articulated = false, ghost = false, opacity = 1 }) {
+function buildBusMarker({
+  x,
+  y,
+  radius,
+  color,
+  articulated = false,
+  ghost = false,
+  opacity = 1,
+  label = null,
+}) {
   const size = radius * 1.6;
   const inner = articulated ? ARTIC_BUS_INNER : TWEMOJI_BUS_INNER;
   // Ghost = "lost-signal" rendering for buses the API stopped reporting
@@ -159,13 +168,28 @@ function buildBusMarker({ x, y, radius, color, articulated = false, ghost = fals
   const dashAttr = ghost ? ' stroke-dasharray="6 4"' : '';
   const opacityAttr = ghost ? ` opacity="${opacity}"` : '';
   // Layer order: fill circle → bus glyph → white stroke ring on top, so the
-  // ring crisply frames the bus instead of being clipped beneath it.
+  // ring crisply frames the bus instead of being clipped beneath it. The
+  // identity badge sits last so the number is never clipped by the ring.
   const body = [
     `<circle cx="${x}" cy="${y}" r="${radius}" fill="#${fill}"/>`,
     `<svg x="${x - size / 2}" y="${y - size / 2}" width="${size}" height="${size}" viewBox="0 0 36 36">${inner}</svg>`,
     `<circle cx="${x}" cy="${y}" r="${radius}" fill="none" stroke="#fff" stroke-width="4"${dashAttr}/>`,
+    label != null
+      ? buildNumberBadge(x + radius * 0.66, y - radius * 0.66, radius * 0.5, label)
+      : '',
   ].join('');
-  return ghost ? `<g${opacityAttr}>${body}</g>` : body;
+  return ghost || opacity < 1 ? `<g${opacityAttr || ` opacity="${opacity}"`}>${body}</g>` : body;
+}
+
+// Small numbered badge clipped to a marker's upper-right so each vehicle has a
+// stable identity readable across video frames. White disc + dark numeral so
+// it reads on any marker fill (pink/purple/gray).
+function buildNumberBadge(cx, cy, r, label) {
+  const fontSize = r * 1.3;
+  return [
+    `<circle cx="${cx}" cy="${cy}" r="${r}" fill="#fff" stroke="#1c1c1c" stroke-width="2"/>`,
+    `<text x="${cx}" y="${cy + fontSize * 0.35}" text-anchor="middle" font-family="Inter, Helvetica, Arial, sans-serif" font-size="${fontSize}" font-weight="700" fill="#1c1c1c">${xmlEscape(String(label))}</text>`,
+  ].join('');
 }
 
 // In-frame legend explaining what a faded/dashed marker means. Rendered when
@@ -204,7 +228,7 @@ async function buildGhostLegend(x, y) {
 // — viewers shouldn't read "we lost track" when the vehicle simply reached
 // its terminal. A loop-arrow glyph in the route color says "arrived, turning
 // around" instead.
-function buildTurnaroundMarker({ x, y, radius, color, opacity = 1 }) {
+function buildTurnaroundMarker({ x, y, radius, color, opacity = 1, label = null }) {
   const iconSize = radius * 1.4;
   const iconX = x - iconSize / 2;
   const iconY = y - iconSize / 2;
@@ -224,6 +248,9 @@ function buildTurnaroundMarker({ x, y, radius, color, opacity = 1 }) {
     `<circle cx="${x}" cy="${y}" r="${radius}" fill="#${color}"/>`,
     `<svg x="${iconX}" y="${iconY}" width="${iconSize}" height="${iconSize}" viewBox="0 0 36 36">${glyph}</svg>`,
     `<circle cx="${x}" cy="${y}" r="${radius}" fill="none" stroke="#fff" stroke-width="4"/>`,
+    label != null
+      ? buildNumberBadge(x + radius * 0.66, y - radius * 0.66, radius * 0.5, label)
+      : '',
   ].join('');
   return opacity < 1 ? `<g opacity="${opacity.toFixed(3)}">${body}</g>` : body;
 }
@@ -373,6 +400,52 @@ function perpendicularFromBearing(bearingDeg) {
   return { x: Math.cos(rad), y: Math.sin(rad) };
 }
 
+// Comet motion trail: a muted line through a vehicle's recent pixel positions
+// (oldest → newest), fading and tapering toward the tail so the head reads as
+// "now" and the tail as "where it came from." The vehicle's disc is drawn on
+// top separately, so this is just the streak behind it. `points` is an array of
+// {x, y}; fewer than 2 renders nothing.
+const TRAIL_COLOR = 'c8ccd2';
+function buildCometTrail(points, { color = TRAIL_COLOR } = {}) {
+  if (!points || points.length < 2) return '';
+  const segs = [];
+  const n = points.length - 1;
+  for (let j = 1; j < points.length; j++) {
+    const frac = j / n; // 0 (tail) → 1 (head)
+    const opacity = (0.14 + 0.52 * frac).toFixed(3);
+    const width = (4 + 11 * frac).toFixed(1);
+    const a = points[j - 1];
+    const b = points[j];
+    segs.push(
+      `<line x1="${a.x.toFixed(1)}" y1="${a.y.toFixed(1)}" x2="${b.x.toFixed(1)}" y2="${b.y.toFixed(1)}" stroke="#${color}" stroke-width="${width}" stroke-linecap="round" opacity="${opacity}"/>`,
+    );
+  }
+  return segs.join('');
+}
+
+// Bottom-edge elapsed-time readout + progress bar for video clips. `elapsedSec`
+// of `totalSec` of real time; the bar fills left→right and a small M:SS label
+// sits above its left end. Static images omit this (no time dimension).
+function buildClipProgress({ elapsedSec, totalSec, width, height }) {
+  const frac = totalSec > 0 ? Math.max(0, Math.min(1, elapsedSec / totalSec)) : 0;
+  const m = Math.floor(elapsedSec / 60);
+  const s = Math.floor(elapsedSec % 60);
+  const label = `${m}:${String(s).padStart(2, '0')}`;
+  const barH = 8;
+  const barY = height - barH;
+  const pillW = 132;
+  const pillH = 44;
+  const pillX = 20;
+  const pillY = barY - 12 - pillH;
+  const fontSize = 28;
+  return [
+    `<rect x="0" y="${barY}" width="${width}" height="${barH}" fill="#000" fill-opacity="0.45"/>`,
+    `<rect x="0" y="${barY}" width="${(width * frac).toFixed(1)}" height="${barH}" fill="#fff" fill-opacity="0.9"/>`,
+    `<rect x="${pillX}" y="${pillY}" width="${pillW}" height="${pillH}" rx="8" fill="#000" fill-opacity="0.6"/>`,
+    `<text x="${pillX + pillW / 2}" y="${pillY + pillH / 2 + fontSize * 0.35}" text-anchor="middle" font-family="Inter, Helvetica, Arial, sans-serif" font-size="${fontSize}" font-weight="600" fill="#fff">${label}</text>`,
+  ].join('');
+}
+
 module.exports = {
   STYLE,
   WIDTH,
@@ -392,6 +465,9 @@ module.exports = {
   TWEMOJI_BUS_STOP_INNER,
   buildBusMarker,
   buildTurnaroundMarker,
+  buildNumberBadge,
+  buildCometTrail,
+  buildClipProgress,
   buildGhostLegend,
   buildTerminalMarker,
   buildStopMarker,

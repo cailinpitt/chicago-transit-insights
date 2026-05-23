@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const { fillInteriorGaps } = require('../../src/bus/bunchingVideo');
+const { fillInteriorGaps, assignBusNumbers, attachTrails } = require('../../src/bus/bunchingVideo');
 
 // Cartesian mode (hasPolyline: false) keeps the math simple: positions
 // interpolate linearly in lat/lon by timestamp fraction.
@@ -80,4 +80,43 @@ test('fillInteriorGaps: independent gaps across multiple vehicles', () => {
   assert.equal(filled, 1, 'only A had an interior gap');
   const a = snapshots[1].vehicles.find((v) => v.vid === 'A');
   assert.ok(a && a.lon === 1);
+});
+
+test('assignBusNumbers: numbers by road position, 1 = lead (highest pdist)', () => {
+  const vehicles = [
+    { vid: 'back', pdist: 1000 },
+    { vid: 'lead', pdist: 5000 },
+    { vid: 'mid', pdist: 3000 },
+  ];
+  const labels = assignBusNumbers(vehicles);
+  assert.equal(labels.get('lead'), 1);
+  assert.equal(labels.get('mid'), 2);
+  assert.equal(labels.get('back'), 3);
+});
+
+test('attachTrails: builds oldest->newest trail spanning the window', () => {
+  const vehicleFrames = [
+    [{ vid: 'A', lat: 0, lon: 0 }],
+    [{ vid: 'A', lat: 0, lon: 1 }],
+    [{ vid: 'A', lat: 0, lon: 2 }],
+    [{ vid: 'A', lat: 0, lon: 3 }],
+  ];
+  attachTrails(vehicleFrames, 2); // up to 2 prior frames
+  const last = vehicleFrames[3][0];
+  assert.deepEqual(
+    last.trail.map((p) => p.lon),
+    [1, 2, 3],
+    'trail covers frames [i-2 .. i], head last',
+  );
+  // First frame has no prior positions -> no trail.
+  assert.equal(vehicleFrames[0][0].trail, undefined);
+});
+
+test('attachTrails: skips parked turnaround markers', () => {
+  const vehicleFrames = [
+    [{ vid: 'A', lat: 0, lon: 0 }],
+    [{ vid: 'A', lat: 0, lon: 1, turnaround: true }],
+  ];
+  attachTrails(vehicleFrames, 5);
+  assert.equal(vehicleFrames[1][0].trail, undefined, 'parked marker gets no trail');
 });

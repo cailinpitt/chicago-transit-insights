@@ -5,7 +5,8 @@ const argv = require('minimist')(process.argv.slice(2));
 
 const { getVehiclesCachedOrFresh } = require('../../src/bus/api');
 const { allRoutes: bunchingRoutes } = require('../../src/bus/routes');
-const { detectAllBunching } = require('../../src/bus/bunching');
+const { detectAllBunching, computeGapBehind } = require('../../src/bus/bunching');
+const { expectedTripMinutes } = require('../../src/shared/gtfs');
 const { loadPattern, findNearestStop } = require('../../src/bus/patterns');
 const { renderBunchingMap } = require('../../src/map');
 const {
@@ -15,7 +16,7 @@ const {
   annotateSignalOrientations,
 } = require('../../src/bus/trafficSignals');
 const { getPatternStops } = require('../../src/bus/stops');
-const { captureBunchingVideo } = require('../../src/bus/bunchingVideo');
+const { captureBunchingVideo, assignBusNumbers } = require('../../src/bus/bunchingVideo');
 const { loginBus, postWithImage, postWithVideo, postText } = require('../../src/bus/bluesky');
 const { isOnCooldown } = require('../../src/shared/state');
 const { commitAndPost } = require('../../src/shared/postDetection');
@@ -226,17 +227,32 @@ async function main() {
   );
   const stops = getPatternStops(pattern);
   console.log(`Stops: ${stops.length} in pattern`);
+  const labels = assignBusNumbers(bunch.vehicles);
   let image;
   try {
-    image = await renderBunchingMap(bunch, pattern, signals, stops);
+    image = await renderBunchingMap(bunch, pattern, signals, stops, { labels });
   } catch (e) {
     console.warn(`Map render failed (${e.message}); will post text-only`);
     image = null;
   }
 
+  const gapBehind = computeGapBehind({
+    vehicles,
+    pid: bunch.pid,
+    bunchVehicles: bunch.vehicles,
+    lengthFt: pattern.lengthFt,
+    tripMinutes: expectedTripMinutes(bunch.route, pattern, now),
+  });
+  if (gapBehind) {
+    console.log(
+      `Gap behind: next bus #${gapBehind.followerVid} ${gapBehind.distFt} ft / ~${gapBehind.minutes ?? '?'} min back`,
+    );
+  }
+
   const text = buildPostText(bunch, pattern, stop, callouts, {
     isAllTimeRecord,
     previousRecord,
+    gapBehind,
   });
   const alt = buildAltText(bunch, pattern, stop);
 
