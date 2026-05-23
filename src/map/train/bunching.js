@@ -11,6 +11,9 @@ const {
   HEIGHT,
   TWEMOJI_TRAIN_INNER,
   buildTurnaroundMarker,
+  buildNumberBadge,
+  buildCometTrail,
+  buildClipProgress,
   TWEMOJI_HOUSE_INNER,
   TWEMOJI_FLAG_INNER,
   buildTerminalMarker,
@@ -144,7 +147,7 @@ function buildTrainOverlaySvg(
   bearingDeg = 0,
   arrowBearingDeg = null,
   unlabeledPinPixels = [],
-  { ghostLegendSvg = null } = {},
+  { ghostLegendSvg = null, clock = null } = {},
 ) {
   const fontSize = 18;
   const labelHeight = fontSize + 8;
@@ -329,8 +332,24 @@ function buildTrainOverlaySvg(
   // train arrived at a real terminus (not a Loop apex) and dropped off the
   // API for the trip-flip — render as a loop-arrow glyph in line color so
   // viewers read "arrived" instead of "lost track."
+  // Comet motion trails (video only): each train carries pre-projected, nudge-
+  // aligned `trail` pixels. Drawn below the markers so the streak reads as
+  // "behind" the train.
+  const trailElements = trainPixels.map(({ trail }) =>
+    trail && trail.length >= 2 ? buildCometTrail(trail) : '',
+  );
+
   const iconSize = TRAIN_MARKER_RADIUS * 1.6;
-  const trainMarkers = trainPixels.map(({ x, y, ghost, turnaround, opacity }) => {
+  const badge = (x, y, label) =>
+    label != null
+      ? buildNumberBadge(
+          x + TRAIN_MARKER_RADIUS * 0.66,
+          y - TRAIN_MARKER_RADIUS * 0.66,
+          TRAIN_MARKER_RADIUS * 0.5,
+          label,
+        )
+      : '';
+  const trainMarkers = trainPixels.map(({ x, y, ghost, turnaround, opacity, label }) => {
     if (turnaround) {
       return buildTurnaroundMarker({
         x,
@@ -338,6 +357,7 @@ function buildTrainOverlaySvg(
         radius: TRAIN_MARKER_RADIUS,
         color: lineColor,
         opacity,
+        label,
       });
     }
     const iconX = x - iconSize / 2;
@@ -347,6 +367,7 @@ function buildTrainOverlaySvg(
     const body = [
       `<circle cx="${x}" cy="${y}" r="${TRAIN_MARKER_RADIUS}" fill="#${fill}" stroke="#fff" stroke-width="4"${dashAttr}/>`,
       `<svg x="${iconX}" y="${iconY}" width="${iconSize}" height="${iconSize}" viewBox="0 0 36 36">${TWEMOJI_TRAIN_INNER}</svg>`,
+      badge(x, y, label),
     ].join('');
     return ghost ? `<g opacity="${opacity}">${body}</g>` : body;
   });
@@ -402,13 +423,18 @@ function buildTrainOverlaySvg(
   // Ghost legend (top-left): pre-rendered by the async caller since width
   // measurement is async. Arrow lives top-right so they don't fight.
   const legendElements = ghostLegendSvg ? [ghostLegendSvg] : [];
+  const progressElements = clock
+    ? [buildClipProgress({ ...clock, width: widthPx, height: heightPx })]
+    : [];
   const elements = [
     ...terminalElements,
     ...labelElements,
+    ...trailElements,
     ...halos,
     ...trainMarkers,
     ...arrows,
     ...legendElements,
+    ...progressElements,
   ].join('\n');
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${widthPx}" height="${heightPx}">${elements}</svg>`;
 }
@@ -703,14 +729,27 @@ async function renderTrainBunchingFrame(view, baseMap, trains, opts = {}) {
   const separated = separateMarkers(rawTrainPixels, TRAIN_MARKER_RADIUS * 2 + 4, {
     axis: perpendicularFromBearing(view.bearingDeg),
   });
-  const trainPixels = separated.map(({ x, y }, idx) => ({
-    x,
-    y,
-    bearingDeg: view.bearingDeg,
-    ghost: trains[idx]?.ghost === true,
-    turnaround: trains[idx]?.turnaround === true,
-    opacity: trains[idx]?.opacity ?? 1,
-  }));
+  const labels = opts.labels || null;
+  const trainPixels = separated.map(({ x, y }, idx) => {
+    // Shift trail points by the same nudge the disc got so the streak stays
+    // attached to its (possibly nudged) marker head.
+    const dx = x - rawTrainPixels[idx].x;
+    const dy = y - rawTrainPixels[idx].y;
+    const trail = (trains[idx]?.trail || []).map((pt) => {
+      const p = project(pt.lat, pt.lon, view.centerLat, view.centerLon, view.zoom, WIDTH, HEIGHT);
+      return { x: p.x + dx, y: p.y + dy };
+    });
+    return {
+      x,
+      y,
+      bearingDeg: view.bearingDeg,
+      ghost: trains[idx]?.ghost === true,
+      turnaround: trains[idx]?.turnaround === true,
+      opacity: trains[idx]?.opacity ?? 1,
+      label: labels ? (labels.get(trains[idx]?.rn) ?? null) : null,
+      trail,
+    };
+  });
 
   const stationsWithPixels = view.visibleStations.map(({ station, x, y, bearingDeg }) => ({
     station,
@@ -767,7 +806,7 @@ async function renderTrainBunchingFrame(view, baseMap, trains, opts = {}) {
     view.bearingDeg,
     view.arrowBearingDeg,
     unlabeledPinPixels,
-    { ghostLegendSvg },
+    { ghostLegendSvg, clock: opts.clock || null },
   );
   return sharp(baseMap)
     .resize(WIDTH, HEIGHT)
@@ -776,10 +815,10 @@ async function renderTrainBunchingFrame(view, baseMap, trains, opts = {}) {
     .toBuffer();
 }
 
-async function renderTrainBunching(bunch, lineColors, trainLines, stations) {
+async function renderTrainBunching(bunch, lineColors, trainLines, stations, opts = {}) {
   const view = computeTrainBunchingView(bunch, lineColors, trainLines, stations);
   const baseMap = await fetchTrainBunchingBaseMap(view);
-  return renderTrainBunchingFrame(view, baseMap, bunch.trains);
+  return renderTrainBunchingFrame(view, baseMap, bunch.trains, { labels: opts.labels || null });
 }
 
 module.exports = {

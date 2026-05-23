@@ -96,6 +96,38 @@ function trainsSpanFt(trains, linePts, lineCum) {
   return Math.round(max);
 }
 
+// Real-time window covered by a comet trail; converted to a frame count via the
+// per-frame real-time spacing (tickMs / interpolate).
+const TRAIL_MS = 75_000;
+
+// Stable per-train identity: number the bunch in track order (the cluster is
+// already sorted by trackDist) so each rn keeps its number across every frame.
+// Returns Map rn → number.
+function assignTrainNumbers(trains) {
+  const labels = new Map();
+  for (let i = 0; i < trains.length; i++) labels.set(trains[i].rn, i + 1);
+  return labels;
+}
+
+// Attach a comet trail (recent positions, oldest → newest) to each non-parked
+// train in every frame, spanning up to `trailFrames` of prior frames. Pure;
+// mutates frame train objects by setting `.trail`. Turnaround (parked) markers
+// are skipped. Exported for testing.
+function attachTrails(trainFrames, trailFrames) {
+  for (let i = 0; i < trainFrames.length; i++) {
+    for (const t of trainFrames[i]) {
+      if (t.turnaround) continue;
+      const start = Math.max(0, i - trailFrames);
+      const trail = [];
+      for (let j = start; j <= i; j++) {
+        const prev = trainFrames[j].find((x) => x.rn === t.rn && !x.turnaround);
+        if (prev) trail.push({ lat: prev.lat, lon: prev.lon });
+      }
+      if (trail.length >= 2) t.trail = trail;
+    }
+  }
+}
+
 async function captureTrainBunchingVideo(bunch, lineColors, trainLines, stations, opts = {}) {
   const tickMs = opts.tickMs || DEFAULT_TICK_MS;
   const ticks = opts.ticks || DEFAULT_TICKS;
@@ -121,6 +153,29 @@ async function captureTrainBunchingVideo(bunch, lineColors, trainLines, stations
     }
     snapshots.push({ ts: Date.now(), trains });
   }
+
+  if (snapshots.length < 2) return null;
+
+  return renderTrainBunchingClip(snapshots, bunch, lineColors, trainLines, stations, {
+    tickMs,
+    interpolate,
+    framerate,
+  });
+}
+
+// Assemble and encode the clip from captured (or reconstructed) snapshots.
+// Split from captureTrainBunchingVideo so it can be driven with historical data.
+async function renderTrainBunchingClip(
+  snapshots,
+  bunch,
+  lineColors,
+  trainLines,
+  stations,
+  opts = {},
+) {
+  const tickMs = opts.tickMs || DEFAULT_TICK_MS;
+  const interpolate = Math.max(1, opts.interpolate || DEFAULT_INTERPOLATE);
+  const framerate = opts.framerate || DEFAULT_FRAMERATE;
 
   if (snapshots.length < 2) return null;
 
@@ -157,9 +212,13 @@ async function captureTrainBunchingVideo(bunch, lineColors, trainLines, stations
   const view = computeTrainBunchingView(bunch, lineColors, trainLines, stations, extraTrains);
   const baseMap = await fetchTrainBunchingBaseMap(view);
 
+  // Stable identity for every bunched train, shared across all frames.
+  const labels = assignTrainNumbers(bunch.trains);
+
   // Stable rn-sort across frames so `separateMarkers` gets consistent input
   // order — otherwise the perpendicular nudge flips for overlapped trains.
   const trainFrames = [];
+  const frameTimes = []; // parallel to trainFrames: real ts of each frame
   const allRns = [...new Set(snapshots.flatMap((s) => s.trains.map((t) => t.rn)))].sort();
 
   // Tail drops: RNs missing from the final snapshot. Render as fading ghosts
@@ -342,17 +401,28 @@ async function captureTrainBunchingVideo(bunch, lineColors, trainLines, stations
       const frameTs = snapshots[i].ts + (snapshots[i + 1].ts - snapshots[i].ts) * t;
       frame.push(...ghostsAt(frameTs));
       trainFrames.push(frame);
+      frameTimes.push(frameTs);
     }
   }
   const finalFrame = allRns.filter((rn) => finalByRn.has(rn)).map((rn) => finalByRn.get(rn));
   finalFrame.push(...ghostsAt(snapshots[lastSnapIdx].ts));
   trainFrames.push(finalFrame);
+  frameTimes.push(videoEndTs);
+
+  // Comet trails: recent path behind each moving train (~TRAIL_MS of real time).
+  const trailFrames = Math.max(2, Math.round(TRAIL_MS / (tickMs / interpolate)));
+  attachTrails(trainFrames, trailFrames);
+
+  const clipStartTs = snapshots[0].ts;
+  const totalSec = Math.max(1, (videoEndTs - clipStartTs) / 1000);
 
   const tmpDir = await Fs.mkdtemp(Path.join(Os.tmpdir(), 'cta-train-video-'));
   try {
     for (let i = 0; i < trainFrames.length; i++) {
       const buf = await renderTrainBunchingFrame(view, baseMap, trainFrames[i], {
         showGhostLegend: [...tailDrops.values()].some((d) => !d.turnaroundEnd),
+        labels,
+        clock: { elapsedSec: (frameTimes[i] - clipStartTs) / 1000, totalSec },
       });
       const framePath = Path.join(tmpDir, `frame_${String(i).padStart(3, '0')}.jpg`);
       await Fs.writeFile(framePath, buf);
@@ -394,4 +464,11 @@ async function captureTrainBunchingVideo(bunch, lineColors, trainLines, stations
   }
 }
 
-module.exports = { captureTrainBunchingVideo, clampTrackSeries, MAX_TRACK_STEP_FT };
+module.exports = {
+  captureTrainBunchingVideo,
+  renderTrainBunchingClip,
+  clampTrackSeries,
+  MAX_TRACK_STEP_FT,
+  assignTrainNumbers,
+  attachTrails,
+};

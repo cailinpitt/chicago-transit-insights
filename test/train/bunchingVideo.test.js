@@ -69,3 +69,27 @@ test('clampTrackSeries: regression — Red Line 902 GPS glitch parks train south
     [100_000, 100_500, 101_000, 101_500, 101_500, 102_000, 102_500, 103_000],
   );
 });
+
+const { assignTrainNumbers, attachTrails } = require('../../src/train/bunchingVideo');
+
+test('assignTrainNumbers: numbers by cluster (track) order, keyed on rn', () => {
+  const labels = assignTrainNumbers([{ rn: '406' }, { rn: '413' }, { rn: '420' }]);
+  assert.equal(labels.get('406'), 1);
+  assert.equal(labels.get('413'), 2);
+  assert.equal(labels.get('420'), 3);
+});
+
+test('attachTrails: builds rn-keyed trail and skips parked turnarounds', () => {
+  const frames = [
+    [{ rn: '406', lat: 0, lon: 0 }],
+    [{ rn: '406', lat: 0, lon: 1 }],
+    [{ rn: '406', lat: 0, lon: 2, turnaround: true }],
+  ];
+  attachTrails(frames, 5);
+  assert.deepEqual(
+    frames[1][0].trail.map((p) => p.lon),
+    [0, 1],
+  );
+  assert.equal(frames[2][0].trail, undefined, 'parked train gets no trail');
+  assert.equal(frames[0][0].trail, undefined, 'first frame has no prior position');
+});

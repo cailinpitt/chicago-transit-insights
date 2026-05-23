@@ -2,7 +2,7 @@ const { LINE_NAMES, shortStationName } = require('./api');
 const { formatCallouts } = require('../shared/history');
 const { formatDistance, formatMinSec, elapsedMinutesLabel } = require('../shared/format');
 
-function buildPostText(bunch, callouts = []) {
+function buildPostText(bunch, callouts = [], opts = {}) {
   const lineName = LINE_NAMES[bunch.line];
   const dest = bunch.trains[0].destination;
   const station = shortStationName(bunch.trains[0].nextStation);
@@ -12,7 +12,15 @@ function buildPostText(bunch, callouts = []) {
     .filter((s) => s !== '#undefined')
     .join(', ');
   const runsLine = runs ? `\n\nRuns: ${runs}` : '';
-  const base = `🚆 ${lineName} Line — to ${dest}\n\n${count} trains within ${formatDistance(bunch.spanFt)} near ${station}${runsLine}`;
+  // The gap the bunch leaves behind it is the rider-facing cost — the wait the
+  // next person on the platform faces. Distance always; minutes when a
+  // scheduled pace is known.
+  const gapLine = opts.gapBehind
+    ? `\n\nNext train ${formatDistance(opts.gapBehind.distFt)}${
+        opts.gapBehind.minutes != null ? ` / ~${opts.gapBehind.minutes} min` : ''
+      } behind`
+    : '';
+  const base = `🚆 ${lineName} Line — to ${dest}\n\n${count} trains within ${formatDistance(bunch.spanFt)} near ${station}${gapLine}${runsLine}`;
   const tail = formatCallouts(callouts);
   return tail ? `${base}\n\n${tail}` : base;
 }

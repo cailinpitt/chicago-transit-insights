@@ -4,9 +4,11 @@ require('../../src/shared/env');
 const argv = require('minimist')(process.argv.slice(2));
 
 const { getAllTrainPositions, LINE_COLORS, LINE_NAMES } = require('../../src/train/api');
-const { detectAllTrainBunching } = require('../../src/train/bunching');
+const { detectAllTrainBunching, computeTrainGapBehind } = require('../../src/train/bunching');
+const { buildLinePolyline } = require('../../src/train/speedmap');
+const { expectedTrainTripMinutes } = require('../../src/shared/gtfs');
 const { renderTrainBunching } = require('../../src/map');
-const { captureTrainBunchingVideo } = require('../../src/train/bunchingVideo');
+const { captureTrainBunchingVideo, assignTrainNumbers } = require('../../src/train/bunchingVideo');
 const { loginTrain, postWithImage, postWithVideo, postText } = require('../../src/train/bluesky');
 const { isOnCooldown } = require('../../src/shared/state');
 const { commitAndPost } = require('../../src/shared/postDetection');
@@ -139,14 +141,35 @@ async function main() {
   if (callouts.length > 0) console.log(`Callouts: ${callouts.join(' · ')}`);
 
   console.log('Rendering map...');
+  const labels = assignTrainNumbers(bunch.trains);
   let image;
   try {
-    image = await renderTrainBunching(bunch, LINE_COLORS, trainLines, trainStations);
+    image = await renderTrainBunching(bunch, LINE_COLORS, trainLines, trainStations, { labels });
   } catch (e) {
     console.warn(`Map render failed (${e.message}); will post text-only`);
     image = null;
   }
-  const text = buildPostText(bunch, callouts);
+
+  const { points: gapPoints, cumDist: gapCum } = buildLinePolyline(trainLines, bunch.line);
+  const destName = bunch.trains[0].destination;
+  const destStation = trainStations.find((s) => s.name === destName);
+  const gapBehind = computeTrainGapBehind({
+    trains,
+    line: bunch.line,
+    trDr: bunch.trDr,
+    bunchTrains: bunch.trains,
+    points: gapPoints,
+    cumDist: gapCum,
+    destPoint: destStation ? { lat: destStation.lat, lon: destStation.lon } : null,
+    tripMinutes: expectedTrainTripMinutes(bunch.line, destName, new Date()),
+  });
+  if (gapBehind) {
+    console.log(
+      `Gap behind: next train #${gapBehind.followerRn} ${gapBehind.distFt} ft / ~${gapBehind.minutes ?? '?'} min back`,
+    );
+  }
+
+  const text = buildPostText(bunch, callouts, { gapBehind });
   const alt = buildAltText(bunch);
 
   if (argv['dry-run']) {

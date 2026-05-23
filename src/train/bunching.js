@@ -125,9 +125,46 @@ function detectTrainBunching(trains, trainLines) {
   return all.length ? all[0] : null;
 }
 
+// Rider-facing cost of a train bunch: the gap behind it. Orient by distance to
+// the destination terminal (track distance from the dest point), find the
+// nearest same-line/same-direction train that's farther from the destination
+// than the bunch's trailing train, and report that gap (+ minutes at scheduled
+// pace). Returns null when we can't orient (no dest point, e.g. Loop-bound) or
+// nothing follows.
+function computeTrainGapBehind({
+  trains,
+  line,
+  trDr,
+  bunchTrains,
+  points,
+  cumDist,
+  destPoint,
+  tripMinutes,
+}) {
+  if (!destPoint || !points || points.length < 2) return null;
+  const totalFt = cumDist[cumDist.length - 1];
+  const termDist = snapToLine(destPoint.lat, destPoint.lon, points, cumDist);
+  const distToDest = (t) => Math.abs(snapToLine(t.lat, t.lon, points, cumDist) - termDist);
+  const bunchRns = new Set(bunchTrains.map((t) => t.rn));
+  const bunchTrailing = Math.max(...bunchTrains.map(distToDest));
+  let follower = null;
+  for (const t of trains) {
+    if (t.line !== line || String(t.trDr) !== String(trDr) || bunchRns.has(t.rn)) continue;
+    const dd = distToDest(t);
+    if (dd <= bunchTrailing) continue;
+    if (!follower || dd < follower.dd) follower = { rn: t.rn, dd };
+  }
+  if (!follower) return null;
+  const distFt = Math.round(follower.dd - bunchTrailing);
+  const minutes =
+    totalFt > 0 && tripMinutes > 0 ? Math.round((distFt / totalFt) * tripMinutes) : null;
+  return { distFt, minutes, followerRn: follower.rn };
+}
+
 module.exports = {
   detectTrainBunching,
   detectAllTrainBunching,
+  computeTrainGapBehind,
   TRAIN_BUNCHING_FT,
   MIN_DISTANCE_FT,
 };

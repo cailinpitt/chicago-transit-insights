@@ -103,3 +103,57 @@ test('ranks size desc then tighter max gap', () => {
   );
   assert.equal(bunch.trains.length, 3);
 });
+
+const { computeTrainGapBehind } = require('../../src/train/bunching');
+
+test('computeTrainGapBehind: nearest follower behind, oriented by destination', () => {
+  // Straight N-S polyline; dest at the north end (high trackDist via lat).
+  const points = [
+    [41.9, -87.65],
+    [41.96, -87.65],
+  ];
+  const { cumulativeDistances } = require('../../src/shared/geo');
+  const cumDist = cumulativeDistances(points.map(([lat, lon]) => ({ lat, lon })));
+  const destPoint = { lat: 41.96, lon: -87.65 }; // north terminus
+  // bunch near 41.94/41.945; follower behind (south) at 41.93; ahead at 41.95.
+  const bunchTrains = [
+    { rn: 'A', lat: 41.945, lon: -87.65, line: 'brn', trDr: '1' },
+    { rn: 'B', lat: 41.94, lon: -87.65, line: 'brn', trDr: '1' },
+  ];
+  const trains = [
+    ...bunchTrains,
+    { rn: 'F', lat: 41.93, lon: -87.65, line: 'brn', trDr: '1' }, // behind
+    { rn: 'AHEAD', lat: 41.95, lon: -87.65, line: 'brn', trDr: '1' }, // ahead, ignored
+    { rn: 'OTHERDIR', lat: 41.92, lon: -87.65, line: 'brn', trDr: '5' }, // wrong dir
+  ];
+  const gap = computeTrainGapBehind({
+    trains,
+    line: 'brn',
+    trDr: '1',
+    bunchTrains,
+    points,
+    cumDist,
+    destPoint,
+    tripMinutes: 0,
+  });
+  assert.equal(gap.followerRn, 'F');
+  assert.ok(gap.distFt > 0);
+  assert.equal(gap.minutes, null); // tripMinutes 0 -> no estimate
+});
+
+test('computeTrainGapBehind: null when no destination point (Loop-bound)', () => {
+  const gap = computeTrainGapBehind({
+    trains: [],
+    line: 'brn',
+    trDr: '1',
+    bunchTrains: [{ rn: 'A', lat: 41.9, lon: -87.6 }],
+    points: [
+      [41.9, -87.6],
+      [41.95, -87.6],
+    ],
+    cumDist: [0, 100],
+    destPoint: null,
+    tripMinutes: 30,
+  });
+  assert.equal(gap, null);
+});
