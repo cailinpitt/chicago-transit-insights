@@ -464,16 +464,23 @@ function main() {
       incidents: out.incidents,
     });
     let existingDataOnly = null;
+    let existingHasLegacy = false;
     if (Fs.existsSync(outputPath)) {
       try {
         const existing = JSON.parse(Fs.readFileSync(outputPath, 'utf8'));
+        // A file written before incidents[] became the sole shape still carries
+        // the legacy top-level alerts[]/observations[] arrays we no longer emit.
+        existingHasLegacy = 'alerts' in existing || 'observations' in existing;
         existingDataOnly = JSON.stringify({
           data_start_ts: existing.data_start_ts,
           incidents: existing.incidents,
         });
       } catch (_) {}
     }
-    if (dataOnly === existingDataOnly) {
+    // Skip only when the incidents are unchanged AND the file is already in the
+    // incidents-only shape. The legacy check forces one write to strip a stale
+    // alerts[]/observations[] file even when its incidents happen to match.
+    if (dataOnly === existingDataOnly && !existingHasLegacy) {
       console.error('export-web: no data changes, skipping write');
       return;
     }
