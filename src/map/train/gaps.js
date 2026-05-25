@@ -95,7 +95,12 @@ function computeTrainGapView(gap, lineColors, trainLines, stations) {
 async function renderTrainGap(gap, lineColors, trainLines, stations) {
   const view = computeTrainGapView(gap, lineColors, trainLines, stations);
   const baseMap = await fetchTrainBunchingBaseMap(view);
-  return renderTrainBunchingFrame(view, baseMap, [gap.leading, gap.trailing]);
+  // Tag the two discs L (last seen) / N (next up) so the post's "Last seen" /
+  // "Next up" run numbers map onto the pins. Chips are keyed by `rn`.
+  const labels = new Map();
+  if (gap.leading?.rn != null) labels.set(gap.leading.rn, 'L');
+  if (gap.trailing?.rn != null) labels.set(gap.trailing.rn, 'N');
+  return renderTrainBunchingFrame(view, baseMap, [gap.leading, gap.trailing], { labels });
 }
 
 module.exports = { renderTrainGap, computeTrainGapView };

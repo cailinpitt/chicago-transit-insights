@@ -20,9 +20,13 @@ Every few minutes, the bot:
 
 A train post looks like this:
 
-> 🚆 Red Line Northbound — ~24-min gap near Wilson (scheduled every ~7 min)
+> 🕳️ Red Line — to Howard
+>
+> ~24 min gap near Wilson — currently scheduled every 7 min
+>
+> Last seen: #711 · Next up: #718
 
-The map highlights the empty stretch and labels the nearest station so riders know where the wait is happening.
+The map highlights the empty stretch, tags the two trains **L** (last seen, the one that just passed) and **N** (next up, the one riders are waiting on), and labels the stations flanking the gap so riders know where the wait is happening. The post spells the two roles out instead of `(last)`/`(next)` — "the last train" reads as the final train of the night, which is the opposite of what we mean.
 
 ## The technical version
 

@@ -15,6 +15,11 @@ const {
   buildBusMarker,
   buildTerminalMarker,
   buildDirectionArrow,
+  markerLabelChip,
+  buildStopMarker,
+  xmlEscape,
+  measureTextWidth,
+  perpendicularFromBearing,
   requireMapboxToken,
   fetchMapboxStatic,
 } = require('../common');
@@ -112,28 +117,66 @@ async function fetchGapBaseMap(view) {
   return fetchMapboxStatic(url, 20000);
 }
 
-async function renderGapMap(gap, pattern) {
+async function renderGapMap(gap, pattern, stop = null) {
   const view = computeGapView(gap, pattern);
   const baseMap = await fetchGapBaseMap(view);
+  // leading = last seen (L), trailing = next up (N) — same roles as the post.
   const vehicles = [gap.leading, gap.trailing];
-  const markerElements = vehicles.map((v) => {
+  const labels = ['L', 'N'];
+  const vehiclePixels = vehicles.map((v) =>
+    project(v.lat, v.lon, view.centerLat, view.centerLon, view.zoom, WIDTH, HEIGHT),
+  );
+  const markerElements = vehicles.map((v, i) =>
+    buildBusMarker({
+      x: vehiclePixels[i].x,
+      y: vehiclePixels[i].y,
+      radius: BUS_MARKER_RADIUS,
+      color: BUS_COLOR,
+      articulated: isArticulated(v.vid),
+    }),
+  );
+  // Identity chips in a layer above the discs so the post's "Last seen" /
+  // "Next up" rows map onto the two pins.
+  const chipElements = vehicles.map((_, i) =>
+    markerLabelChip(vehiclePixels[i].x, vehiclePixels[i].y, BUS_MARKER_RADIUS, labels[i]),
+  );
+
+  // Anchor stop — names where the wait is happening. (Train gap maps pin the
+  // flanking stations; the bus gap map previously labeled no stop at all even
+  // though the post says "near X".) Push the sign off the route, label below.
+  const stopElements = [];
+  if (stop && stop.lat != null && stop.lon != null) {
     const { x, y } = project(
-      v.lat,
-      v.lon,
+      stop.lat,
+      stop.lon,
       view.centerLat,
       view.centerLon,
       view.zoom,
       WIDTH,
       HEIGHT,
     );
-    return buildBusMarker({
-      x,
-      y,
-      radius: BUS_MARKER_RADIUS,
-      color: BUS_COLOR,
-      articulated: isArticulated(v.vid),
-    });
-  });
+    if (x >= 0 && x <= WIDTH && y >= 0 && y <= HEIGHT) {
+      const perp = perpendicularFromBearing(view.bearingDeg);
+      const sx = x + perp.x * 26;
+      const sy = y + perp.y * 26;
+      stopElements.push(buildStopMarker(sx, sy, 32));
+      const rawName = stop.stopName || '';
+      if (rawName) {
+        const fontSize = 16;
+        const labelH = 26;
+        // Measure actual glyph width (librsvg) instead of guessing per-char —
+        // the heuristic left a wide band of dead padding around shorter names.
+        const textW = await measureTextWidth(rawName, fontSize, { bold: true });
+        const boxW = textW + 16; // 8px padding each side
+        const lx = Math.max(4, Math.min(WIDTH - boxW - 4, sx - boxW / 2));
+        const ly = Math.max(4, Math.min(HEIGHT - labelH - 4, sy + 24));
+        stopElements.push(
+          `<rect x="${lx}" y="${ly}" width="${boxW}" height="${labelH}" fill="#000" fill-opacity="0.8" rx="3"/>`,
+          `<text x="${lx + boxW / 2}" y="${ly + 18}" fill="#fff" text-anchor="middle" font-family="Inter, Helvetica, Arial, sans-serif" font-size="${fontSize}" font-weight="600">${xmlEscape(rawName)}</text>`,
+        );
+      }
+    }
+  }
   const arrowElements = [buildDirectionArrow(WIDTH - 220, 180, view.bearingDeg)];
 
   const terminalElements = [];
@@ -155,7 +198,7 @@ async function renderGapMap(gap, pattern) {
     terminalElements.push(...buildTerminalMarker(x, y, TERMINAL_MARKER_RADIUS, glyph));
   }
 
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${WIDTH}" height="${HEIGHT}">${terminalElements.join('\n')}${markerElements.join('\n')}${arrowElements.join('\n')}</svg>`;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${WIDTH}" height="${HEIGHT}">${terminalElements.join('\n')}${stopElements.join('\n')}${markerElements.join('\n')}${chipElements.join('\n')}${arrowElements.join('\n')}</svg>`;
   return sharp(baseMap)
     .resize(WIDTH, HEIGHT)
     .composite([{ input: Buffer.from(svg), top: 0, left: 0 }])

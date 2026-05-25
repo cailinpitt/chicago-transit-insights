@@ -250,7 +250,7 @@ async function main() {
   console.log('Rendering map...');
   let image;
   try {
-    image = await renderGapMap(gap, pattern);
+    image = await renderGapMap(gap, pattern, chosenStop);
   } catch (e) {
     console.warn(`Map render failed (${e.message}); will post text-only`);
     image = null;

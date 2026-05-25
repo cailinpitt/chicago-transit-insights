@@ -26,6 +26,19 @@ test('buildPostText falls back to leading.nextStation when nearStation is null',
   assert.ok(text.includes('Belmont'));
 });
 
+test('buildPostText spells out rider roles with Last seen / Next up', () => {
+  const g = { ...gap, leading: { ...gap.leading, rn: '711' }, trailing: { rn: '718' } };
+  const text = buildPostText(g);
+  assert.ok(text.includes('Last seen: #711'));
+  assert.ok(text.includes('Next up: #718'));
+  assert.ok(!text.includes('Runs:'));
+  assert.ok(!text.includes('(last)'));
+});
+
+test('buildPostText marks the modeled gap as approximate with a tilde', () => {
+  assert.ok(buildPostText(gap).includes('~22 min gap'));
+});
+
 test('buildAltText describes the gap', () => {
   const alt = buildAltText(gap);
   assert.ok(alt.includes('Map of the Brown Line'));

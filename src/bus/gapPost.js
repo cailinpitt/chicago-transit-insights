@@ -8,15 +8,17 @@ function routeTitle(route) {
 }
 
 function buildPostText(gap, pattern, stop, callouts = []) {
-  // `leading` is the bus already past the gap (last seen);
-  // `trailing` is the next one a rider is waiting for.
-  const last = gap.leading?.vid ? `#${gap.leading.vid}` : null;
-  const next = gap.trailing?.vid ? `#${gap.trailing.vid}` : null;
+  // `leading` is the bus already past the gap (last seen); `trailing` is the
+  // next one a rider is waiting for. "(last)/(next)" read as ambiguous, so spell
+  // the rider roles out — the map tags the two discs L/N to match.
+  const lastSeen = gap.leading?.vid ? `#${gap.leading.vid}` : null;
+  const nextUp = gap.trailing?.vid ? `#${gap.trailing.vid}` : null;
   const busesLine =
-    last || next
-      ? `\n\nBuses: ${[last && `${last} (last)`, next && `${next} (next)`].filter(Boolean).join(', ')}`
+    lastSeen || nextUp
+      ? `\n\n${[lastSeen && `Last seen: ${lastSeen}`, nextUp && `Next up: ${nextUp}`].filter(Boolean).join(' · ')}`
       : '';
-  const base = `🕳️ ${routeTitle(gap.route)} — ${pattern.direction}\n\n${formatMinutes(gap.gapMin)} gap near ${stop.stopName} — scheduled around every ${formatMinutes(gap.expectedMin)} this hour${busesLine}`;
+  // Tilde on the modeled gap: it's a distance/speed estimate, not a measured ETA.
+  const base = `🕳️ ${routeTitle(gap.route)} — ${pattern.direction}\n\n~${formatMinutes(gap.gapMin)} gap near ${stop.stopName} — scheduled around every ${formatMinutes(gap.expectedMin)} this hour${busesLine}`;
   const tail = formatCallouts(callouts);
   return tail ? `${base}\n\n${tail}` : base;
 }

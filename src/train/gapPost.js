@@ -7,15 +7,19 @@ function buildPostText(gap, callouts = []) {
   const dest = gap.leading.destination;
   const where = shortStationName(gap.nearStation?.name || gap.leading.nextStation);
   const whereClause = where ? ` near ${where}` : '';
-  // `leading` is the train already past the gap (last seen);
-  // `trailing` is the next one a rider is waiting for.
-  const last = gap.leading?.rn ? `#${gap.leading.rn}` : null;
-  const next = gap.trailing?.rn ? `#${gap.trailing.rn}` : null;
+  // `leading` is the train already past the gap (last seen); `trailing` is the
+  // next one a rider is waiting for. "(last)/(next)" read as ambiguous ("last
+  // train" = final train of the night), so spell the rider roles out — the map
+  // tags the two discs L/N to match.
+  const lastSeen = gap.leading?.rn ? `#${gap.leading.rn}` : null;
+  const nextUp = gap.trailing?.rn ? `#${gap.trailing.rn}` : null;
   const runsLine =
-    last || next
-      ? `\n\nRuns: ${[last && `${last} (last)`, next && `${next} (next)`].filter(Boolean).join(', ')}`
+    lastSeen || nextUp
+      ? `\n\n${[lastSeen && `Last seen: ${lastSeen}`, nextUp && `Next up: ${nextUp}`].filter(Boolean).join(' · ')}`
       : '';
-  const base = `🕳️ ${lineName} Line — to ${dest}\n\n${formatMinutes(gap.gapMin)} gap${whereClause} — currently scheduled every ${formatMinutes(gap.expectedMin)}${runsLine}`;
+  // Tilde on the modeled gap: it's a distance/speed estimate, not a measured
+  // ETA (see docs/GAPS.md). The schedule headway stays bare — it's a lookup.
+  const base = `🕳️ ${lineName} Line — to ${dest}\n\n~${formatMinutes(gap.gapMin)} gap${whereClause} — currently scheduled every ${formatMinutes(gap.expectedMin)}${runsLine}`;
   const tail = formatCallouts(callouts);
   return tail ? `${base}\n\n${tail}` : base;
 }

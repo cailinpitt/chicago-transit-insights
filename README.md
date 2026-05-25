@@ -236,8 +236,10 @@ Local state (gitignored, operator-managed):
 Reply: ~10-minute timelapse video of the cluster, with intersection traffic signals and bus stops annotated.
 
 ### Bus gap
-> 🕳 Route 76 (Diversey) — Westbound
-> 20 min gap near Diversey & Oak Park — currently scheduled every 6 min
+> 🕳️ Route 76 (Diversey) — Westbound
+> ~20 min gap near Diversey & Oak Park — scheduled around every 6 min this hour
+>
+> Last seen: #1934 · Next up: #8021
 
 ![Bus gap example](docs/images/bus-gap.jpg)
 
