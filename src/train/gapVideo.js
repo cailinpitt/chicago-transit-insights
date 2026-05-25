@@ -21,8 +21,9 @@ const DEFAULT_FRAMERATE = 16;
 
 // Frame can't be wider than this trailing-train→stop distance, or the markers
 // shrink to specks and 10 min of motion is imperceptible. Beyond it the gap is
-// "too deep for a useful clip" → caller falls back to the still map.
-const MAX_APPROACH_FT = 21_120; // 4 mi
+// "too deep for a useful clip" → caller falls back to the still map. Anchored at
+// the gap midpoint, so this caps the *half*-gap: 5 mi covers gaps up to ~24 min.
+const MAX_APPROACH_FT = 26_400; // 5 mi
 // Post-capture floor: if the next train didn't meaningfully close on the stop
 // (and never reached it), there's no story — skip the clip, keep the still.
 const MIN_APPROACH_FT = 1_320; // 0.25 mi

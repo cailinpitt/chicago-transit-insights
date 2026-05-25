@@ -265,6 +265,12 @@ async function main() {
   const text = buildPostText(gap, pattern, chosenStop, callouts);
   const alt = buildAltText(gap, pattern, chosenStop);
 
+  // The timelapse aims the next bus at the gap *midpoint*, not chosenStop (which
+  // sits at the leading/far end). The trailing bus can't cross a whole 15+ min
+  // gap in a 10-min clip, so anchoring at the far end always trips the
+  // distance guard — the midpoint is half the distance and reachable.
+  const videoStop = findNearestStop(pattern, (gap.leading.pdist + gap.trailing.pdist) / 2);
+
   if (argv['dry-run']) {
     const outPath = writeDryRunAsset(
       image,
@@ -276,7 +282,7 @@ async function main() {
       const tickMs = argv['tick-ms'] ? Number(argv['tick-ms']) : undefined;
       const interpolate = argv.interpolate ? Number(argv.interpolate) : undefined;
       console.log(`\nCapturing gap timelapse (ticks=${ticks || 'default'})...`);
-      const video = await captureBusGapVideo(gap, pattern, chosenStop, {
+      const video = await captureBusGapVideo(gap, pattern, videoStop, {
         ticks,
         tickMs,
         interpolate,
@@ -338,7 +344,7 @@ async function main() {
   // too deep to frame or the bus doesn't close in; those stay a still map.
   try {
     console.log('Capturing bus gap timelapse...');
-    const video = await captureBusGapVideo(gap, pattern, chosenStop);
+    const video = await captureBusGapVideo(gap, pattern, videoStop);
     if (!video) {
       console.log('Gap timelapse skipped (gap too deep, bus resolved, or no approach)');
       return;

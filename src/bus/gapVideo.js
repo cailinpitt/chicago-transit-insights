@@ -20,8 +20,10 @@ const DEFAULT_INTERPOLATE = 4;
 const DEFAULT_FRAMERATE = 16;
 
 // Buses are slow (~880 ft/min), so the readable-frame ceiling and the
-// "did it actually close?" floor are tighter than the train clip's.
-const MAX_APPROACH_FT = 10_560; // 2 mi — beyond this the bus can't close in 10 min
+// "did it actually close?" floor are tighter than the train clip's. The clip
+// aims at the gap midpoint (see bin/bus/gaps.js), so this caps the *half*-gap:
+// 3 mi covers gaps up to ~36 min (the 15-min detection floor is ~1.25 mi).
+const MAX_APPROACH_FT = 15_840; // 3 mi
 const MIN_APPROACH_FT = 660; // 0.125 mi
 const ARRIVED_FT = 400;
 const TRAIL_MS = 75_000;
