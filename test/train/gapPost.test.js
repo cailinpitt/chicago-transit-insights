@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { buildPostText, buildAltText } = require('../../src/train/gapPost');
+const { buildPostText, buildAltText, buildGapVideoPostText } = require('../../src/train/gapPost');
 
 const gap = {
   line: 'brn',
@@ -46,4 +46,57 @@ test('buildAltText describes the gap', () => {
   assert.ok(alt.includes('toward Kimball'));
   assert.ok(alt.includes('22 min gap'));
   assert.ok(alt.includes('Belmont'));
+});
+
+test('buildGapVideoPostText anchors on the parent station when the train reaches the gap', () => {
+  const result = { reached: true, gapMin: 22, elapsedSec: 600, startDistFt: 5_000, endDistFt: 0 };
+  const text = buildGapVideoPostText(gap, result);
+  assert.ok(text.includes('~22 min gap on the Brown Line'));
+  assert.ok(text.includes('Belmont'));
+  assert.ok(text.includes('closed the gap'));
+  assert.ok(text.includes('10 minutes later'));
+});
+
+test('buildGapVideoPostText reports half-closed progress', () => {
+  const result = {
+    reached: false,
+    gapMin: 22,
+    elapsedSec: 600,
+    startDistFt: 10_000,
+    endDistFt: 5_000,
+  };
+  const text = buildGapVideoPostText(gap, result);
+  assert.ok(text.includes('had covered about half the gap'));
+  assert.ok(text.includes('Belmont'));
+});
+
+test('buildGapVideoPostText reports barely-closed when the train has covered <25%', () => {
+  const result = {
+    reached: false,
+    gapMin: 22,
+    elapsedSec: 600,
+    startDistFt: 10_000,
+    endDistFt: 9_000,
+  };
+  const text = buildGapVideoPostText(gap, result);
+  assert.ok(text.includes('had barely closed in'));
+});
+
+test('buildGapVideoPostText reports nearly-closed when the train has covered >60%', () => {
+  const result = {
+    reached: false,
+    gapMin: 22,
+    elapsedSec: 600,
+    startDistFt: 10_000,
+    endDistFt: 2_000,
+  };
+  const text = buildGapVideoPostText(gap, result);
+  assert.ok(text.includes('had nearly closed the gap'));
+});
+
+test('buildGapVideoPostText falls back to leading.nextStation when nearStation is null', () => {
+  const g = { ...gap, nearStation: null };
+  const result = { reached: true, gapMin: 22, elapsedSec: 600, startDistFt: 5_000, endDistFt: 0 };
+  const text = buildGapVideoPostText(g, result);
+  assert.ok(text.includes('Belmont'));
 });

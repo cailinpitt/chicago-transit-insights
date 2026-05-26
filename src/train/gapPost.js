@@ -1,6 +1,6 @@
 const { LINE_NAMES, shortStationName } = require('./api');
 const { formatCallouts } = require('../shared/history');
-const { formatMinutes, formatDistance, elapsedMinutesLabel } = require('../shared/format');
+const { formatMinutes, elapsedMinutesLabel } = require('../shared/format');
 
 function buildPostText(gap, callouts = []) {
   const lineName = LINE_NAMES[gap.line];
@@ -34,18 +34,27 @@ function buildAltText(gap) {
   return `Map of the ${lineName} Line toward ${dest} showing a ${formatMinutes(gap.gapMin)} gap between trains${whereClause}.`;
 }
 
-// Timelapse reply text. Leads with the full effect — how long the line has gone
-// without a train — then the next train's progress toward the platform, so the
-// "next train ~N min" half doesn't undersell a gap whose first half already
-// elapsed.
+// Timelapse reply text. Anchors on the parent post's station (where the rider
+// is waiting). The video itself is framed at the gap *midpoint*, but that
+// station would be unfamiliar to a reader landing on the reply. Progress is
+// described against the train's travel toward the midpoint (startDistFt →
+// endDistFt), bucketed into words so we don't print a precise percentage of a
+// half-gap.
 function buildGapVideoPostText(gap, result) {
-  const stop = shortStationName(result.stopName) || 'the stop';
+  const station = shortStationName(gap.nearStation?.name || gap.leading.nextStation);
+  const where = station ? ` near ${station}` : '';
   const elapsed = elapsedMinutesLabel(result.elapsedSec);
-  const lead = `The ${LINE_NAMES[gap.line]} Line hasn't had a train in ~${result.gapMin} min.`;
+  const lead = `~${result.gapMin} min gap on the ${LINE_NAMES[gap.line]} Line${where}.`;
   if (result.reached) {
-    return `${lead} ${elapsed} later, the next one reached ${stop}.`;
+    return `${lead} The next train closed the gap ${elapsed} later.`;
   }
-  return `${lead} ${elapsed} later, the next one had closed to ${formatDistance(result.endDistFt)} from ${stop}.`;
+  const closed = Math.max(0, (result.startDistFt || 0) - (result.endDistFt || 0));
+  const fraction = result.startDistFt > 0 ? closed / result.startDistFt : 0;
+  let progress;
+  if (fraction < 0.25) progress = 'had barely closed in';
+  else if (fraction < 0.6) progress = 'had covered about half the gap';
+  else progress = 'had nearly closed the gap';
+  return `${lead} ${elapsed} later, the next train ${progress}.`;
 }
 
 function buildGapVideoAltText(gap, result) {

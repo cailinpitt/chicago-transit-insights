@@ -1,6 +1,6 @@
 const { names: routeNames } = require('./routes');
 const { formatCallouts } = require('../shared/history');
-const { formatMinutes, formatDistance, elapsedMinutesLabel } = require('../shared/format');
+const { formatMinutes, elapsedMinutesLabel } = require('../shared/format');
 
 function routeTitle(route) {
   const name = routeNames[route];
@@ -29,18 +29,25 @@ function buildAltText(gap, pattern, stop) {
   return `Map of ${routeTitle(gap.route)} ${pattern.direction.toLowerCase()} showing a ${formatMinutes(gap.gapMin)} gap between buses near ${stop.stopName}.`;
 }
 
-// Timelapse reply text. Leads with the full effect — how long the route has
-// gone without a bus — then the next bus's progress toward the stop, so the
-// "next bus ~N min" half doesn't undersell a gap whose first half already
-// elapsed.
-function buildGapVideoPostText(gap, result) {
-  const stop = result.stopName || 'the stop';
+// Timelapse reply text. Anchors on the parent post's stop (where the rider is
+// waiting) — the video itself is framed at the gap *midpoint*, but that stop
+// would be unfamiliar to a reader landing on the reply. Progress is described
+// against the bus's travel toward the midpoint (startDistFt → endDistFt),
+// bucketed into words so we don't print a precise percentage of a half-gap.
+function buildGapVideoPostText(gap, result, stop) {
+  const where = stop?.stopName ? ` near ${stop.stopName}` : '';
   const elapsed = elapsedMinutesLabel(result.elapsedSec);
-  const lead = `${routeTitle(gap.route)} hasn't had a bus in ~${result.gapMin} min.`;
+  const lead = `~${result.gapMin} min gap on ${routeTitle(gap.route)}${where}.`;
   if (result.reached) {
-    return `${lead} ${elapsed} later, the next one reached ${stop}.`;
+    return `${lead} The next bus closed the gap ${elapsed} later.`;
   }
-  return `${lead} ${elapsed} later, the next one had closed to ${formatDistance(result.endDistFt)} from ${stop}.`;
+  const closed = Math.max(0, (result.startDistFt || 0) - (result.endDistFt || 0));
+  const fraction = result.startDistFt > 0 ? closed / result.startDistFt : 0;
+  let progress;
+  if (fraction < 0.25) progress = 'had barely closed in';
+  else if (fraction < 0.6) progress = 'had covered about half the gap';
+  else progress = 'had nearly closed the gap';
+  return `${lead} ${elapsed} later, the next bus ${progress}.`;
 }
 
 function buildGapVideoAltText(gap, pattern, result) {
