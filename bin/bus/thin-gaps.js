@@ -39,22 +39,29 @@ const HOUR_MS = 60 * 60 * 1000;
 // to read naturally to a follower scrolling by.
 const CLEAR_LOOKBACK_MS = 24 * 60 * 60 * 1000;
 
-function findUnresolvedThinGaps(now) {
+// Outer bound for the synthetic-clear pass. Firings older than this are left
+// alone — observations roll off at 7d so we can't prove recovery anyway, and
+// a stale incident from a month ago isn't worth retroactively resolving.
+const SYNTHETIC_CLEAR_LOOKBACK_MS = 30 * 24 * 60 * 60 * 1000;
+
+function findUnresolvedThinGaps(now, { sinceMs = CLEAR_LOOKBACK_MS, untilMs = 0 } = {}) {
+  // Any observed-clear row (posted or synthetic) counts as resolution so we
+  // don't double-clear after the stale-pass writes a synthetic row.
   return getDb()
     .prepare(`
       SELECT d.id, d.ts, d.line AS route, d.post_uri
       FROM disruption_events d
       WHERE d.kind = 'bus' AND d.source = 'observed-thin'
         AND d.posted = 1 AND d.post_uri IS NOT NULL
-        AND d.ts >= ?
+        AND d.ts >= ? AND d.ts < ?
         AND NOT EXISTS (
           SELECT 1 FROM disruption_events c
-          WHERE c.kind = 'bus' AND c.source = 'observed-clear' AND c.posted = 1
+          WHERE c.kind = 'bus' AND c.source = 'observed-clear'
             AND c.line = d.line AND c.ts >= d.ts
         )
       ORDER BY d.ts ASC
     `)
-    .all(now - CLEAR_LOOKBACK_MS);
+    .all(now - sinceMs, now - untilMs);
 }
 
 function buildClearText(route) {
@@ -98,6 +105,45 @@ async function handleClears(now, agentGetter, dryRun) {
         postUri: result.uri,
       },
       firstObsTs,
+    );
+  }
+}
+
+// Synthetic-clear pass: thin-gap firings that fell out of the 24h Bluesky
+// reply window but have since seen buses again. Without this they linger
+// forever as active=true on the public dashboard — `export-web.js` reads
+// `active` purely from the absence of an `observed-clear` row. Common cause:
+// a fire near end-of-service for a weekday-only route that doesn't run
+// again until after the weekend (e.g. 55N going silent Sat evening → Tue AM).
+async function handleStaleClears(now, dryRun) {
+  const stale = findUnresolvedThinGaps(now, {
+    sinceMs: SYNTHETIC_CLEAR_LOOKBACK_MS,
+    untilMs: CLEAR_LOOKBACK_MS,
+  });
+  if (stale.length === 0) return;
+  for (const row of stale) {
+    const route = row.route;
+    const obs = getBusObservations(route, row.ts + 1);
+    if (!obs || obs.length === 0) continue;
+    const firstObsTs = obs.reduce((m, o) => (o.ts < m ? o.ts : m), obs[0].ts);
+    if (dryRun) {
+      console.log(
+        `--- DRY RUN thin-gap synthetic clear ${route} @ ${new Date(firstObsTs).toISOString()} (firing ${new Date(row.ts).toISOString()}) ---`,
+      );
+      continue;
+    }
+    recordDisruption(
+      {
+        kind: 'bus',
+        line: route,
+        source: 'observed-clear',
+        posted: false,
+        postUri: null,
+      },
+      firstObsTs,
+    );
+    console.log(
+      `thin-gaps: synthesized clear for ${route} (firing ${new Date(row.ts).toISOString()} too old for Bluesky reply; first re-observation ${new Date(firstObsTs).toISOString()})`,
     );
   }
 }
@@ -153,6 +199,11 @@ async function main() {
   // up rather than left dangling. (24h cooldown prevents the re-fire from
   // landing this same tick anyway.)
   await handleClears(now, getAgent, dryRun);
+
+  // Then sweep older firings (outside the 24h Bluesky window) and resolve any
+  // whose routes are observed again, so the public dashboard stops showing
+  // them as active. No Bluesky reply — the original post stays as-is.
+  await handleStaleClears(now, dryRun);
 
   const priorHour = new Date(now - HOUR_MS);
   const nextHour = new Date(now + HOUR_MS);
