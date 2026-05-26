@@ -119,7 +119,7 @@ function main() {
         (
           SELECT MIN(c.ts)
           FROM disruption_events c
-          WHERE c.kind = d.kind AND c.source = 'observed-clear' AND c.posted = 1
+          WHERE c.kind = d.kind AND c.source = 'observed-clear'
             AND c.ts >= d.ts
             AND IFNULL(c.line, '')          = IFNULL(d.line, '')
             AND IFNULL(c.direction, '')     = IFNULL(d.direction, '')

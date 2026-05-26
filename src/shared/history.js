@@ -872,7 +872,7 @@ function hasObservedClearForPulse({ kind, pulseUri }) {
   const row = db()
     .prepare(`
     SELECT id FROM disruption_events
-    WHERE kind = ? AND source = 'observed-clear' AND posted = 1
+    WHERE kind = ? AND source = 'observed-clear'
       AND ts >= ?
       AND line = ?
       AND IFNULL(direction, '') = IFNULL(?, '')
@@ -909,7 +909,7 @@ function getRecentPulsePostsAll({ kind, line, withinMs }, now = Date.now()) {
       AND d.ts >= ?
       AND NOT EXISTS (
         SELECT 1 FROM disruption_events c
-        WHERE c.kind = d.kind AND c.source = 'observed-clear' AND c.posted = 1
+        WHERE c.kind = d.kind AND c.source = 'observed-clear'
           AND c.ts >= d.ts
           AND IFNULL(c.line, '')          = IFNULL(d.line, '')
           AND IFNULL(c.direction, '')     = IFNULL(d.direction, '')
