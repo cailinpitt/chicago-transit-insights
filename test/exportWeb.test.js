@@ -90,7 +90,7 @@ test('observation with no matching alert is a bot-only incident', () => {
 
 test('normalizes train line short codes to full names on both sides', () => {
   const incidents = buildIncidents(
-    [alert({ routes: ['g'] })],
+    [alert({ routes: ['g'], headline: 'Green Line delays' })],
     [obs({ line: 'g', ts: NOW + 60_000 })],
   );
   assert.equal(incidents.length, 1, 'should still pair after normalization');
@@ -150,6 +150,43 @@ test('merged first_seen_ts falls back to obs.ts when onset_ts is null', () => {
   const o = obs({ id: 1, ts: NOW - 10 * 60_000, onset_ts: null });
   const incidents = buildIncidents([alert({ first_seen_ts: NOW })], [o]);
   assert.equal(incidents[0].first_seen_ts, NOW - 10 * 60_000);
+});
+
+test('routes union across versions preserves lines CTA dropped before resolving', () => {
+  // Mirrors event 3mmsa2hmli42h: CTA started multi-line, then edited the
+  // headline down to just Brown before clearing — the snapshot in
+  // alert_posts.routes loses Red and Purple entirely.
+  const a = alert({
+    routes: ['brown'],
+    headline: 'Brown Line Service Running with Delays near Belmont',
+    versions: [
+      { ts: NOW, headline: 'Kimball-bound Brown and Linden-bound Purple Line Service Delayed' },
+      {
+        ts: NOW + 60_000,
+        headline: 'Brown, Red and Purple Line Service Delayed near Belmont',
+      },
+      { ts: NOW + 120_000, headline: 'Brown Line Service Running with Delays near Belmont' },
+    ],
+  });
+  const incidents = buildIncidents([a], []);
+  assert.deepEqual(incidents[0].routes, ['red', 'brown', 'purple']);
+});
+
+test('routes union also folds in matched observation lines', () => {
+  const a = alert({ routes: ['brown'], headline: 'Brown Line Service Delayed' });
+  const o = obs({ line: 'brown', ts: NOW + 60_000 });
+  const incidents = buildIncidents([a], [o]);
+  assert.deepEqual(incidents[0].routes, ['brown']);
+});
+
+test('bus incidents keep alert.routes as-is (no train-line text mining)', () => {
+  const a = alert({
+    kind: 'bus',
+    routes: ['9'],
+    headline: 'Route 9 reroute — Red Line construction',
+  });
+  const incidents = buildIncidents([a], []);
+  assert.deepEqual(incidents[0].routes, ['9']);
 });
 
 test('merged first_seen_ts stays on CTA when CTA fired first', () => {

@@ -45,6 +45,22 @@ function postUrlRkey(postUrl) {
   return m ? m[1] : null;
 }
 
+// Parse L train line names out of CTA alert text. CTA edits a live alert as
+// the situation evolves and may drop lines from the headline once their
+// service recovers (e.g. "Brown, Red and Purple Line Service Delayed" →
+// "Brown Line Service Running with Delays"); without this the incident's
+// final `routes` would lose the lines that were affected earlier.
+const TRAIN_LINE_KEYS = ['red', 'blue', 'brown', 'green', 'orange', 'pink', 'purple', 'yellow'];
+const TRAIN_LINE_REGEX = new RegExp(`\\b(${TRAIN_LINE_KEYS.join('|')})\\b`, 'gi');
+function trainLinesFromText(text) {
+  if (!text) return [];
+  const found = new Set();
+  for (const m of text.matchAll(TRAIN_LINE_REGEX)) {
+    found.add(m[1].toLowerCase());
+  }
+  return [...found];
+}
+
 // The CTA-side sub-block of a unified incident; null on bot-only incidents.
 // Carries CTA's own lifecycle (first_seen_ts/resolved_ts/active) separately
 // from the incident-level fields so a consumer can still compute the
@@ -134,10 +150,30 @@ function buildIncidents(builtAlerts, builtObservations) {
       Number.POSITIVE_INFINITY,
     );
     const incidentFirstSeen = Math.min(alert.first_seen_ts, earliestObs);
+    // Routes union: alert_posts.routes is overwritten on each CTA edit, so a
+    // multi-line alert that CTA narrows to a single line before resolving
+    // would otherwise drop the dropped lines from the incident entirely.
+    // Re-derive from every version's text + matched obs lines so the
+    // incident reflects every line ever affected.
+    let incidentRoutes = alert.routes;
+    if (alert.kind === 'train') {
+      const union = new Set(alert.routes);
+      const texts = [alert.headline, alert.short_description];
+      if (Array.isArray(alert.versions)) {
+        for (const v of alert.versions) {
+          texts.push(v.headline, v.short_description);
+        }
+      }
+      for (const t of texts) {
+        for (const line of trainLinesFromText(t)) union.add(line);
+      }
+      for (const o of matches) if (o.line) union.add(o.line);
+      incidentRoutes = TRAIN_LINE_KEYS.filter((k) => union.has(k));
+    }
     incidents.push({
       id: postUrlRkey(alert.post_url) ?? postUrlRkey(matches[0]?.post_url) ?? alert.alert_id,
       kind: alert.kind,
-      routes: alert.routes,
+      routes: incidentRoutes,
       first_seen_ts: incidentFirstSeen,
       // While active, don't report a resolution — a paired obs may carry its own
       // earlier resolved_ts, which would read as "ended before it started."
