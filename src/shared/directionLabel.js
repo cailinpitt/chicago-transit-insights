@@ -17,6 +17,7 @@
 // …), not the short GTFS code.
 
 const trainStations = require('../train/data/trainStations.json');
+const { normalizeTrainLine } = require('./observationDescribe');
 
 // Long color → short GTFS code (mirrors the LINE_ALIAS reverse from
 // observationDescribe.js). trainStations.json keys lines by short code, so we
@@ -70,10 +71,14 @@ function nearestStationName(line, lat, lon) {
 
 function directionLabel(line, direction) {
   if (!line || !direction || direction === 'all') return null;
+  // The exporter delays its short→long line normalization until after this
+  // helper runs (see buildIncidents in bin/export-web.js), so accept either
+  // form — keys the route map on long names but normalize on the way in.
+  const longLine = normalizeTrainLine(line);
 
   const rt = direction.match(/^branch-\d+-(outbound|inbound)$/);
   if (rt) {
-    const map = ROUND_TRIP_TERMINUS[line];
+    const map = ROUND_TRIP_TERMINUS[longLine];
     const terminus = map?.[rt[1]];
     return terminus ? `toward ${terminus}` : null;
   }
@@ -84,7 +89,7 @@ function directionLabel(line, direction) {
   if (mlen) {
     const lat = Number(mlen[1]) / 1000;
     const lon = Number(mlen[2]) / 1000;
-    const name = nearestStationName(line, lat, lon);
+    const name = nearestStationName(longLine, lat, lon);
     return name ? `toward ${name}` : null;
   }
 

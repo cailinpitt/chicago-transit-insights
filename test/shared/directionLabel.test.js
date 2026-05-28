@@ -35,6 +35,15 @@ test('null / "all" / unrecognized direction returns null', () => {
   assert.equal(directionLabel('blue', 'something-weird'), null);
 });
 
+test('short-code line names work too (exporter normalizes line names downstream)', () => {
+  // bin/export-web.js delays its brn→brown/p→purple normalization until after
+  // direction_label is computed, so we accept either form.
+  assert.equal(directionLabel('brn', 'branch-0-outbound'), 'toward Kimball');
+  assert.equal(directionLabel('p', 'branch-1-inbound'), 'toward Howard');
+  assert.equal(directionLabel('org', 'branch-0-outbound'), 'toward Midway');
+  assert.equal(directionLabel('y', 'branch-len26-42039--87752'), 'toward Dempster-Skokie');
+});
+
 test('null / unknown line returns null even with a valid direction key', () => {
   assert.equal(directionLabel(null, 'branch-0-outbound'), null);
   assert.equal(directionLabel('', 'branch-0-outbound'), null);
