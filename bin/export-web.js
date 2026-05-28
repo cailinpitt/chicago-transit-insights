@@ -21,6 +21,7 @@ const {
   describeBotEvidenceBullets,
   normalizeTrainLine,
 } = require('../src/shared/observationDescribe');
+const { directionLabel } = require('../src/shared/directionLabel');
 
 const DB_PATH =
   process.env.HISTORY_DB_PATH || Path.join(__dirname, '..', 'state', 'history.sqlite');
@@ -458,6 +459,11 @@ function main() {
       kind: row.kind,
       line: row.line,
       direction: row.direction ?? null,
+      // Pre-computed "toward <terminus>" string for the renderer. Translates
+      // the opaque branch-N-outbound / branch-len… direction key into a
+      // rider-facing label; null when the key carries no usable direction
+      // (e.g. `all` on single-branch lines, or buses where direction is null).
+      direction_label: directionLabel(row.line, row.direction) ?? null,
       from_station: row.from_station ?? null,
       to_station: row.to_station ?? null,
       detection_source: detectionSource,
