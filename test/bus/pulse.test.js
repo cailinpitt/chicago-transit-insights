@@ -206,3 +206,52 @@ test('candidate carries lookbackMin, minHeadwayMin, name, expectedActive', async
   assert.equal(c.lookbackMin, 25); // 3*8=24 → clamp to floor 25
   assert.equal(c.expectedActive, 6);
 });
+
+// Replay of the 2026-05-28 CTA Bus Tracker feed outage (21:06→21:44 CDT). The
+// feed froze fleet-wide; every route went cold at once and the detector posted
+// 5 FPs (54/63/66/72/79). `now` is anchored to 21:43, the tick where all 5
+// were simultaneously strict-zero. The fixture carries the real (thinned)
+// observations plus the GTFS-derived headway/expectedActive from the original
+// posts. The feed-freshness guard must suppress; with the guard disabled the
+// same data reproduces the cold candidates, proving the regression.
+const feedOutageFixture = require('./fixtures/bus-feed-outage-2026-05-28-2143.json');
+
+function buildFromFixture(fx) {
+  const observationsByRoute = new Map();
+  for (const [route, obs] of Object.entries(fx.observationsByRoute)) {
+    observationsByRoute.set(String(route), obs);
+  }
+  const cold = new Set(fx.coldRoutes.map(String));
+  return {
+    routes: fx.routes,
+    routeNames: Object.fromEntries(fx.routes.map((r) => [r, `Route ${r}`])),
+    observationsByRoute,
+    loadPattern: async (pid) => fakePattern(pid),
+    getKnownPidsForRoute: async (route) => [`${route}00`],
+    // Cold routes carry their real expected-active (≥2, passes the gate);
+    // the rest are sub-threshold so the guard-disabled run yields exactly the
+    // routes that posted in production. Constant across `when` so the ramp /
+    // wind-down probes don't suppress.
+    expectedRouteActive: (route) => (cold.has(String(route)) ? fx.expectedActiveByRoute[route] : 1),
+    expectedHeadway: (route) => fx.headwayByRoute[route] ?? 8,
+    globalDistinctTs: fx.globalDistinctTs,
+    recentlyActiveRoutes: new Set(fx.routes.map(String)),
+    now: fx.now,
+    opts: { minuteOfHour: fx.minuteOfHour },
+  };
+}
+
+test('feed outage 2026-05-28: feed-freshness guard suppresses the fleet-wide blackout', async () => {
+  const result = await detectBusBlackouts(buildFromFixture(feedOutageFixture));
+  assert.equal(result.skipped, 'feed-stale');
+  assert.equal(result.candidates.length, 0);
+});
+
+test('feed outage 2026-05-28: without the guard the same data reproduces the FPs', async () => {
+  const input = buildFromFixture(feedOutageFixture);
+  input.opts = { ...input.opts, feedStaleMs: Number.POSITIVE_INFINITY };
+  const result = await detectBusBlackouts(input);
+  assert.equal(result.skipped, null);
+  const flagged = result.candidates.map((c) => c.route).sort();
+  assert.deepEqual(flagged, [...feedOutageFixture.coldRoutes].sort());
+});

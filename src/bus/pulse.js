@@ -31,6 +31,16 @@ const RAMP_PRIOR_ACTIVE_THRESHOLD = 1;
 const WIND_DOWN_NEXT_ACTIVE_THRESHOLD = 1;
 const WIND_DOWN_MINUTE_THRESHOLD = 30;
 const COLD_START_GRACE_MS = 6 * 60 * 60 * 1000;
+// Feed-freshness guard. A frozen upstream feed (CTA Bus Tracker outage or a
+// stalled observe-buses ingestion) stops delivering new observations for
+// EVERY route at once. The pipeline-wide-quiet guard below can't see this:
+// it counts routes by distinct timestamps over the full lookback, which still
+// straddles pre-outage data, so every route reads as "active" even though
+// nothing new is arriving. If the newest observation across the whole fleet
+// is older than this, treat it as an outage and suppress — a real
+// single-route blackout still leaves fresh data on the other ~90 routes.
+// Snapshots normally land ~1–2 min apart; 5 min is several missed cycles.
+const FEED_STALE_MS = 5 * 60 * 1000;
 
 function clamp(v, lo, hi) {
   return Math.max(lo, Math.min(hi, v));
@@ -59,6 +69,7 @@ async function detectBusBlackouts({
   const windDownNextActiveThreshold =
     opts.windDownNextActiveThreshold ?? WIND_DOWN_NEXT_ACTIVE_THRESHOLD;
   const windDownMinuteThreshold = opts.windDownMinuteThreshold ?? WIND_DOWN_MINUTE_THRESHOLD;
+  const feedStaleMs = opts.feedStaleMs ?? FEED_STALE_MS;
   const minuteOfHour = opts.minuteOfHour;
 
   // Accept either a Date or a millisecond timestamp. Tests pass a number;
@@ -70,6 +81,24 @@ async function detectBusBlackouts({
   }
   if ((globalDistinctTs || 0) < minDistinctTs) {
     return { skipped: 'warming-up', candidates: [] };
+  }
+
+  // Feed-freshness guard: if the newest observation across the WHOLE fleet is
+  // older than feedStaleMs, the upstream feed/ingestion has frozen and every
+  // route looks cold at once. Suppress — see FEED_STALE_MS. (A 2026-05-28
+  // Bus Tracker outage froze the feed for ~37 min and posted 5 FPs; the
+  // distinct-timestamp guard below missed it because the lookback still
+  // contained pre-outage data.) Skipped only when observations exist at all;
+  // a truly empty map falls through to the cross-route guard.
+  let newestObsTs = 0;
+  for (const route of routes) {
+    const obs = observationsByRoute.get(String(route)) || [];
+    for (const o of obs) {
+      if (o.ts > newestObsTs) newestObsTs = o.ts;
+    }
+  }
+  if (newestObsTs > 0 && nowMs - newestObsTs > feedStaleMs) {
+    return { skipped: 'feed-stale', candidates: [] };
   }
 
   // First pass: figure out which routes are "active" right now (≥ minOtherDistinctTs
@@ -227,4 +256,5 @@ module.exports = {
   WIND_DOWN_NEXT_ACTIVE_THRESHOLD,
   WIND_DOWN_MINUTE_THRESHOLD,
   COLD_START_GRACE_MS,
+  FEED_STALE_MS,
 };

@@ -494,6 +494,8 @@ async function main() {
         'warming-up': `only ${globalDistinctTs} distinct snapshot(s) in observations table — observe-buses warming up`,
         'pipeline-wide-quiet':
           'fewer than 5 routes reporting normally (cross-route guard) — likely an upstream API/observe-buses issue, not a route-specific blackout',
+        'feed-stale':
+          'newest observation across the whole fleet is stale (feed-freshness guard) — upstream Bus Tracker/observe-buses feed frozen, not a route-specific blackout',
       }[detection.skipped] || detection.skipped;
     console.log(`bus-pulse: skipped — ${reasonProse}`);
     return;
