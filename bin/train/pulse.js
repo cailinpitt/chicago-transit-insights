@@ -25,6 +25,8 @@ require('../../src/shared/env');
 const { setup, writeDryRunAsset, runBin } = require('../../src/shared/runBin');
 const {
   detectDeadSegments,
+  detectFeedGap,
+  FEED_GAP_LOOKBACK_MS,
   directionKeyFor,
   stationsAlongBranch,
 } = require('../../src/train/pulse');
@@ -596,6 +598,23 @@ async function main() {
   if (distinctTs < MIN_DISTINCT_TS) {
     console.log(
       `train-pulse: only ${distinctTs} distinct snapshot(s) in last ${LOOKBACK_MS / 60000} min (need ${MIN_DISTINCT_TS}) — warming up, skipping`,
+    );
+    return;
+  }
+
+  // Feed-coverage guard: a stalled (then stale-replaying) upstream feed makes
+  // every line look cold at once. Inspect the GLOBAL snapshot timestamps over
+  // a 30-min window — wider than the 20-min LOOKBACK_MS so it stays active
+  // through the recovery shadow — and skip the whole tick if there's a ≥5 min
+  // hole. See detectFeedGap; this caught the 2026-05-28 outage that posted a
+  // Purple full-line FP plus Red/Blue/Brown segment FPs.
+  const feedGap = detectFeedGap({
+    positions: getRecentTrainPositions(now - FEED_GAP_LOOKBACK_MS),
+    now,
+  });
+  if (feedGap.gap) {
+    console.log(
+      `train-pulse: ${Math.round(feedGap.maxGapMs / 60000)}-min gap in the global feed within the last ${FEED_GAP_LOOKBACK_MS / 60000} min — upstream feed outage / stale recovery, skipping tick`,
     );
     return;
   }

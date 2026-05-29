@@ -45,6 +45,45 @@ const DEFAULT_MIN_SPAN_FRAC = 0.5;
 // admit path. Three trains in a row going missing isn't normal variance.
 const SOLO_EXPECTED_TRAINS = 3;
 
+// Feed-coverage guard. When the upstream Train Tracker feed / observe-trains
+// ingestion stalls, the whole fleet stops reporting at once — and when it
+// recovers it often replays stale positions for a few minutes. Both make
+// cold-segment and synthetic full-line detection unreliable: absence of an
+// observation no longer means absence of a train. detectFeedGap inspects the
+// GLOBAL snapshot timestamps (every line) over the recent window and reports
+// the largest stretch with no snapshot — counting the leading edge (window
+// start → first snapshot) and trailing edge (last snapshot → now) as well as
+// internal gaps. The leading edge matters because a gap that has scrolled to
+// the start of the window still poisons a detector whose lookback reaches into
+// it (the "recovery shadow" — FPs kept firing ~20 min after the feed came
+// back on 2026-05-28). Red/Blue run 24h so the global feed has a snapshot
+// every ~1–2 min around the clock; a ≥5 min gap is an outage, not sparse
+// service. The 30 min window keeps the guard active through the recovery
+// shadow without suppressing normal pulses.
+const FEED_GAP_LOOKBACK_MS = 30 * 60 * 1000;
+const FEED_GAP_MS = 5 * 60 * 1000;
+
+function detectFeedGap({
+  positions,
+  now,
+  lookbackMs = FEED_GAP_LOOKBACK_MS,
+  maxGapMs = FEED_GAP_MS,
+}) {
+  const nowMs = typeof now === 'number' ? now : now.getTime();
+  const since = nowMs - lookbackMs;
+  const tsList = [
+    ...new Set(positions.map((p) => p.ts).filter((t) => t >= since && t <= nowMs)),
+  ].sort((a, b) => a - b);
+  // No global snapshots at all in the window = total outage.
+  if (tsList.length === 0) return { gap: true, maxGapMs: lookbackMs };
+  let maxGap = Math.max(tsList[0] - since, nowMs - tsList[tsList.length - 1]);
+  for (let i = 1; i < tsList.length; i++) {
+    const g = tsList[i] - tsList[i - 1];
+    if (g > maxGap) maxGap = g;
+  }
+  return { gap: maxGap >= maxGapMs, maxGapMs: maxGap };
+}
+
 function detectDeadSegments({ line, trainLines, stations, headwayMin, now, opts = {} }) {
   const lookbackMs = opts.lookbackMs || DEFAULT_LOOKBACK_MS;
   const binFt = opts.binFt || DEFAULT_BIN_FT;
@@ -713,6 +752,9 @@ function nearestStationAtOrAfter(stationsOnBranch, ft) {
 
 module.exports = {
   detectDeadSegments,
+  detectFeedGap,
+  FEED_GAP_LOOKBACK_MS,
+  FEED_GAP_MS,
   stationsAlongBranch,
   nearestStationAtOrBefore,
   nearestStationAtOrAfter,

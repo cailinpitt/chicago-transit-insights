@@ -35,6 +35,8 @@ In parallel, every few minutes:
 
 A separate path catches the degenerate case: if a line has zero observations at all while other lines do, pulse synthesizes a full-line candidate and posts a line-wide blackout alert. That's how a Yellow shuttle-bus replacement (which empties the entire line) gets caught.
 
+Before any of this runs, a **feed-coverage guard** checks the global snapshot stream (all lines together): if there's a ≥ 5-minute hole anywhere in the last 30 minutes — leading, trailing, or internal — the whole tick is skipped. When the upstream Train Tracker feed or the `observe-trains` ingestion stalls, *every* line goes silent at once and then often replays stale positions for a few minutes on recovery; absence of an observation stops meaning absence of a train. The 30-minute window (wider than the 20-minute lookback) keeps the guard active through the "recovery shadow" where a detector's lookback still reaches back into the outage. (Red and Blue run 24h, so in normal operation the global feed has a snapshot every 1–2 minutes — a 5-minute hole is an outage, not sparse service.) A 2026-05-28 feed outage posted a Purple full-line FP plus Red/Blue/Brown segment FPs before this guard existed.
+
 This is how the bot can flag a Red Line outage minutes before CTA's own alert appears — the empty stretch is right there in the live feed. The same machinery now handles single-station single-tracking (e.g. Belmont) and complete line shutdowns alongside the long-stretch case.
 
 ### Bus pulse — bot-detected route blackouts
