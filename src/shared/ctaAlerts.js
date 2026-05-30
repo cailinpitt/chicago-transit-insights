@@ -159,9 +159,15 @@ function matchesChicagoWallTime(ms, y, mo, d, h) {
   return get('year') === y && get('month') === mo && get('day') === d && get('hour') % 24 === h;
 }
 
+// The trailing terminator group bounds the station-name captures. ` in\b`
+// stops the capture before a trailing "in both/each direction(s)" clause
+// (e.g. "...between Cermak-Chinatown and Fullerton in both directions") so the
+// second endpoint resolves to "Fullerton", not "Fullerton in both directions".
+// No CTA station name contains a space-delimited "in", so this can't truncate
+// a real name mid-string.
 const BETWEEN_PATTERNS = [
-  /\bbetween\s+([A-Z][A-Za-z0-9./&\- ]+?)\s+and\s+([A-Z][A-Za-z0-9./&\- ]+?)(?:[.,;]| stations?\b| on\b| due\b| while\b)/i,
-  /\bfrom\s+([A-Z][A-Za-z0-9./&\- ]+?)\s+to\s+([A-Z][A-Za-z0-9./&\- ]+?)(?:[.,;]| stations?\b| on\b| due\b| while\b)/i,
+  /\bbetween\s+([A-Z][A-Za-z0-9./&\- ]+?)\s+and\s+([A-Z][A-Za-z0-9./&\- ]+?)(?:[.,;]| stations?\b| in\b| on\b| due\b| while\b)/i,
+  /\bfrom\s+([A-Z][A-Za-z0-9./&\- ]+?)\s+to\s+([A-Z][A-Za-z0-9./&\- ]+?)(?:[.,;]| stations?\b| in\b| on\b| due\b| while\b)/i,
 ];
 
 // Trailing word boundary deliberately omitted on the verb stems so "suspended",

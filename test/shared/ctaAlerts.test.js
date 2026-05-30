@@ -75,6 +75,25 @@ test('extractBetweenStations pulls "from X to Y" phrasing', () => {
   assert.deepEqual(s, { from: 'UIC-Halsted', to: 'Forest Park' });
 });
 
+test('extractBetweenStations stops at a trailing "in both directions" clause', () => {
+  // Real alert 114934: without the ` in\b` terminator the second endpoint
+  // captured "Fullerton in both directions" and failed station resolution, so
+  // the segment-dim map silently fell back to a text-only post.
+  const s = extractBetweenStations(
+    'Red Line subway trains will be rerouted to the elevated tracks between Cermak-Chinatown and Fullerton in both directions.',
+  );
+  assert.deepEqual(s, { from: 'Cermak-Chinatown', to: 'Fullerton' });
+});
+
+test('extractBetweenStations does not truncate a multi-word terminus on "in"', () => {
+  // Guard for the ` in\b` terminator: a legitimate two-word station name with
+  // no space-delimited "in" must survive intact.
+  const s = extractBetweenStations(
+    'Service suspended between Belmont and Irving Park due to work.',
+  );
+  assert.deepEqual(s, { from: 'Belmont', to: 'Irving Park' });
+});
+
 test('extractBetweenStations returns null when no match', () => {
   assert.equal(extractBetweenStations('Elevator out of service at the station.'), null);
 });
