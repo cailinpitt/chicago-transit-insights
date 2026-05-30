@@ -6,7 +6,12 @@ const { promisify } = require('node:util');
 
 const { getVehicles } = require('./api');
 const { TYPICAL_SPEED_FT_PER_MIN } = require('./gaps');
-const { computeBunchingView, fetchBunchingBaseMap, renderBunchingFrame } = require('../map');
+const {
+  computeBunchingView,
+  applyGapDashToView,
+  fetchBunchingBaseMap,
+  renderBunchingFrame,
+} = require('../map');
 const { attachTrails } = require('./bunchingVideo');
 const { cumulativeDistances } = require('../shared/geo');
 const { smoothSeries } = require('../shared/stats');
@@ -124,6 +129,11 @@ async function renderBusGapClip(snapshots, gap, pattern, stop, opts = {}) {
   const bunch = { route: gap.route, pid: gap.pid, vehicles: [snapshots[0].vehicle] };
   const extra = [...trailingPath, { lat: stop.lat, lon: stop.lon }];
   const view = computeBunchingView(bunch, pattern, extra);
+  // Dash the gap stretch the next bus still has to cover — from its starting
+  // position up to the midpoint wait stop — in the route color, matching the
+  // still gap map. Static for the whole clip (the bus drives across it); the
+  // base map is fetched once so the dashed stretch can't follow the bus.
+  applyGapDashToView(view, pattern, snapshots[0].vehicle.track, stopTrack);
   const baseMap = await fetchBunchingBaseMap(view);
 
   // The trailing bus keeps the "N" (Next up) chip it carries on the still map.

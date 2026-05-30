@@ -147,6 +147,14 @@ function buildDashedGapSvg(points, color, { coreStroke = 8 } = {}) {
   return `<polyline points="${pts}" fill="none" stroke="#${color}" stroke-width="${coreStroke}" stroke-linecap="butt" stroke-linejoin="round" stroke-dasharray="${dash}"/>`;
 }
 
+// SVG stand-in for a Mapbox pin-s station marker, drawn in the overlay so it
+// can sit *above* the dashed gap stretch (base-map pins bake under the dash).
+// White disc with a dark rim so it reads on both the dark basemap and the
+// dashed line in the route color. Pixel-space center.
+function buildStationPinDotSvg(x, y, r = 7) {
+  return `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${r}" fill="#ffffff" stroke="#1b1b1b" stroke-width="1.5"/>`;
+}
+
 // Compact form: a small amber dot. Used in video frames where the full
 // sign-and-glyph reads as visual noise on dense routes — the dot still
 // marks "there's a stop here" without taking over the frame.
@@ -501,6 +509,7 @@ module.exports = {
   buildStopMarker,
   buildStopDot,
   buildDashedGapSvg,
+  buildStationPinDotSvg,
   xmlEscape,
   requireMapboxToken,
   fetchMapboxStatic,

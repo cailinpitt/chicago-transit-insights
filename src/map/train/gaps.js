@@ -127,6 +127,48 @@ function computeTrainGapVideoView(gap, trailingPath, lineColors, trainLines, sta
       view.pinStations.push({ station: stop, x: px.x, y: px.y });
     }
   }
+
+  // Dash the gap stretch the next train still has to cover — from its starting
+  // position up to the midpoint wait stop — in the line color, matching the
+  // still gap map. The bunching framing bakes the full solid route; rebuild it
+  // to run solid only outside [lo, hi] so the dashes (drawn by the frame
+  // renderer) show on bare basemap. Static for the whole clip (the train drives
+  // across it); the base map is fetched once so the stretch can't follow it.
+  const { points, cumDist } = buildLinePolyline(trainLines, gap.line);
+  const startPt = trailingPath?.[0];
+  if (points.length >= 2 && startPt && stop?.lat != null && stop?.lon != null) {
+    const lo = snapToLine(startPt.lat, startPt.lon, points, cumDist);
+    const hi = snapToLine(stop.lat, stop.lon, points, cumDist);
+    if (hi > lo) {
+      const loPt = pointAlongLine(points, cumDist, lo);
+      const hiPt = pointAlongLine(points, cumDist, hi);
+      const gapPts = [];
+      if (loPt) gapPts.push([loPt.lat, loPt.lon]);
+      for (let i = 0; i < points.length; i++) {
+        if (cumDist[i] > lo && cumDist[i] < hi) gapPts.push(points[i]);
+      }
+      if (hiPt) gapPts.push([hiPt.lat, hiPt.lon]);
+
+      const beforePts = points.filter((_, i) => cumDist[i] <= lo);
+      if (loPt) beforePts.push([loPt.lat, loPt.lon]);
+      const afterPts = [];
+      if (hiPt) afterPts.push([hiPt.lat, hiPt.lon]);
+      for (let i = 0; i < points.length; i++) if (cumDist[i] >= hi) afterPts.push(points[i]);
+      const routeOverlay = (pts) =>
+        pts.length >= 2 ? `path-7+${view.color}-0.7(${encodeURIComponent(encode(pts))})` : null;
+      view.overlays = view.overlays.filter((o) => !o.startsWith('path-'));
+      view.overlays.unshift(...[routeOverlay(beforePts), routeOverlay(afterPts)].filter(Boolean));
+
+      if (gapPts.length >= 2) {
+        view.gapPath = gapPts.map(([lat, lon]) => ({ lat, lon }));
+        // Station pins are normally baked into the base map, which would put
+        // them *under* the dashed gap. Strip them and let the frame renderer
+        // draw the pins in the SVG layer above the dash instead.
+        view.overlays = view.overlays.filter((o) => !o.startsWith('pin-'));
+        view.drawPinsInSvg = true;
+      }
+    }
+  }
   return view;
 }
 

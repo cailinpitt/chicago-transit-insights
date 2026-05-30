@@ -21,6 +21,7 @@ const {
   buildDirectionArrow,
   buildGhostLegend,
   buildDashedGapSvg,
+  buildStationPinDotSvg,
   xmlEscape,
   measureTextWidth,
   requireMapboxToken,
@@ -862,6 +863,19 @@ async function renderTrainBunchingFrame(view, baseMap, trains, opts = {}) {
     if (gapEls) {
       const gapSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="${WIDTH}" height="${HEIGHT}">${gapEls}</svg>`;
       layers.push({ input: Buffer.from(gapSvg), top: 0, left: 0 });
+    }
+  }
+  // When the gap view strips the base-map pins (so they don't bake under the
+  // dash), redraw them in an SVG layer above the dash — but below the main
+  // overlay so station labels and train markers still sit on top.
+  if (view.drawPinsInSvg && view.pinStations?.length) {
+    const pinEls = view.pinStations
+      .filter(({ x, y }) => x >= 0 && x <= WIDTH && y >= 0 && y <= HEIGHT)
+      .map(({ x, y }) => buildStationPinDotSvg(x, y))
+      .join('');
+    if (pinEls) {
+      const pinSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="${WIDTH}" height="${HEIGHT}">${pinEls}</svg>`;
+      layers.push({ input: Buffer.from(pinSvg), top: 0, left: 0 });
     }
   }
   layers.push({ input: Buffer.from(svg), top: 0, left: 0 });

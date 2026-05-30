@@ -22,6 +22,7 @@ const {
   buildTerminalMarker,
   buildStopMarker,
   buildStopDot,
+  buildDashedGapSvg,
   buildDirectionArrow,
   measureTextWidth,
   xmlEscape,
@@ -74,6 +75,35 @@ function slicePatternAroundBunch(pattern, bunch) {
   const minCum = Math.min(...vehiclePositions) - CONTEXT_PAD_FT;
   const maxCum = Math.max(...vehiclePositions) + CONTEXT_PAD_FT;
   return pattern.points.filter((_, i) => cum[i] >= minCum && cum[i] <= maxCum);
+}
+
+/**
+ * Rebuild a bunching view's baked route so it runs solid only *outside* the
+ * [lo, hi] gap stretch (cumulative track distances along pattern.points), and
+ * hand the inner stretch to the frame renderer as `gapPath` to dash in the
+ * route color — matching the still gap maps. Mapbox static paths can't dash,
+ * and a solid line left baked under the gap would show between the dashes, so
+ * the route is split here before the base map is fetched. Used by the gap
+ * timelapse, whose bunching framing otherwise bakes the full solid route.
+ */
+function applyGapDashToView(view, pattern, lo, hi) {
+  const cum = cumulativeDistances(pattern.points);
+  const inner = pattern.points.filter((_, i) => cum[i] >= lo && cum[i] <= hi);
+  if (inner.length < 2) return view;
+  const before = pattern.points.filter((_, i) => cum[i] <= lo);
+  const after = pattern.points.filter((_, i) => cum[i] >= hi);
+  const solid = [];
+  for (const slice of [before, after]) {
+    if (slice.length < 2) continue;
+    const poly = encodeURIComponent(encode(slice.map((p) => [p.lat, p.lon])));
+    solid.push(
+      `path-${ROUTE_HALO_STROKE}+${ROUTE_HALO_COLOR}(${poly})`,
+      `path-${ROUTE_CORE_STROKE}+${ROUTE_CORE_COLOR}(${poly})`,
+    );
+  }
+  view.overlays = [...solid, ...view.overlays.filter((o) => !o.startsWith('path-'))];
+  view.gapPath = inner.map((p) => ({ lat: p.lat, lon: p.lon }));
+  return view;
 }
 
 /**
@@ -363,11 +393,24 @@ async function renderBunchingFrame(view, baseMap, vehicles, signals = [], stops 
   }
 
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${WIDTH}" height="${HEIGHT}">${signalElements.join('\n')}${stopElements.join('\n')}${highlightElements.join('\n')}${terminalElements.join('\n')}${vehicleLayer.join('\n')}${chipLayer.join('\n')}${arrowElements.join('\n')}${legendElements.join('\n')}${readoutElements.join('\n')}${progressElements.join('\n')}</svg>`;
-  return sharp(baseMap)
-    .resize(WIDTH, HEIGHT)
-    .composite([{ input: Buffer.from(svg), top: 0, left: 0 }])
-    .jpeg({ quality: 85 })
-    .toBuffer();
+  // Gap timelapses pass a `gapPath` to dash over the bare basemap in the route
+  // color (Mapbox static paths can't dash). Composite it as its own layer first
+  // so it sits under the bus markers and labels.
+  const layers = [];
+  if (view.gapPath?.length >= 2) {
+    const gapPixels = view.gapPath.map((p) =>
+      project(p.lat, p.lon, view.centerLat, view.centerLon, view.zoom, WIDTH, HEIGHT),
+    );
+    const gapEls = buildDashedGapSvg(gapPixels, ROUTE_CORE_COLOR, {
+      coreStroke: ROUTE_CORE_STROKE,
+    });
+    if (gapEls) {
+      const gapSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="${WIDTH}" height="${HEIGHT}">${gapEls}</svg>`;
+      layers.push({ input: Buffer.from(gapSvg), top: 0, left: 0 });
+    }
+  }
+  layers.push({ input: Buffer.from(svg), top: 0, left: 0 });
+  return sharp(baseMap).resize(WIDTH, HEIGHT).composite(layers).jpeg({ quality: 85 }).toBuffer();
 }
 
 async function renderBunchingMap(bunch, pattern, signals = [], stops = [], opts = {}) {
@@ -381,6 +424,7 @@ async function renderBunchingMap(bunch, pattern, signals = [], stops = [], opts 
 module.exports = {
   renderBunchingMap,
   computeBunchingView,
+  applyGapDashToView,
   fetchBunchingBaseMap,
   renderBunchingFrame,
 };
