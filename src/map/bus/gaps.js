@@ -17,6 +17,7 @@ const {
   buildDirectionArrow,
   markerLabelChip,
   buildStopMarker,
+  buildDashedGapSvg,
   xmlEscape,
   measureTextWidth,
   perpendicularFromBearing,
@@ -25,12 +26,6 @@ const {
 } = require('../common');
 const { isArticulated } = require('../../bus/fleet');
 
-// Warm amber for the segment *between* the two bounding buses — that's the
-// stretch of route where a rider would be waiting. Matches the train gap strip
-// (src/map/train/gaps.js) so both modes' gap maps read the same; pops on the
-// dark basemap without the neon magenta we used to render.
-const GAP_SEGMENT_COLOR = 'ffb020';
-const GAP_SEGMENT_STROKE = 10;
 const BUS_COLOR = 'ff2a6d';
 const BUS_MARKER_RADIUS = 34;
 const TERMINAL_MARKER_RADIUS = BUS_MARKER_RADIUS;
@@ -59,22 +54,36 @@ function sliceBetweenVehicles(pattern, a, b) {
   const lo = Math.min(A.cum, B.cum);
   const hi = Math.max(A.cum, B.cum);
   const inner = pattern.points.filter((_, i) => cum[i] >= lo && cum[i] <= hi);
+  // The route is drawn solid only outside the gap so the dashed gap stretch
+  // shows the basemap between dashes (no solid line baked underneath).
+  const before = pattern.points.filter((_, i) => cum[i] <= lo);
+  const after = pattern.points.filter((_, i) => cum[i] >= hi);
   const padLo = lo - CONTEXT_PAD_FT;
   const padHi = hi + CONTEXT_PAD_FT;
   const framing = pattern.points.filter((_, i) => cum[i] >= padLo && cum[i] <= padHi);
-  return { inner, framing };
+  return { inner, framing, before, after };
 }
 
 function computeGapView(gap, pattern) {
-  const { inner, framing } = sliceBetweenVehicles(pattern, gap.leading, gap.trailing);
+  const { inner, framing, before, after } = sliceBetweenVehicles(
+    pattern,
+    gap.leading,
+    gap.trailing,
+  );
 
-  const fullPoly = encode(pattern.points.map((p) => [p.lat, p.lon]));
-  const gapPoly = encode(inner.map((p) => [p.lat, p.lon]));
-  const overlays = [
-    `path-${ROUTE_HALO_STROKE}+${ROUTE_HALO_COLOR}(${encodeURIComponent(fullPoly)})`,
-    `path-${ROUTE_CORE_STROKE}+${ROUTE_CORE_COLOR}(${encodeURIComponent(fullPoly)})`,
-    `path-${GAP_SEGMENT_STROKE}+${GAP_SEGMENT_COLOR}(${encodeURIComponent(gapPoly)})`,
-  ];
+  // Draw the route solid on the two non-gap slices only. The gap stretch is
+  // dashed in the SVG layer (Mapbox static paths can't dash) over bare basemap,
+  // so the dashes read in the route color with no solid line behind them.
+  const overlays = [];
+  for (const slice of [before, after]) {
+    if (slice.length < 2) continue;
+    const poly = encodeURIComponent(encode(slice.map((p) => [p.lat, p.lon])));
+    overlays.push(
+      `path-${ROUTE_HALO_STROKE}+${ROUTE_HALO_COLOR}(${poly})`,
+      `path-${ROUTE_CORE_STROKE}+${ROUTE_CORE_COLOR}(${poly})`,
+    );
+  }
+  const gapPath = inner.map((p) => ({ lat: p.lat, lon: p.lon }));
 
   const framePts = framing.length > 0 ? framing : inner;
   const vehicles = [gap.leading, gap.trailing];
@@ -123,7 +132,7 @@ function computeGapView(gap, pattern) {
   const origin = originPoint ? { lat: originPoint.lat, lon: originPoint.lon } : null;
   const terminal = terminalPoint ? { lat: terminalPoint.lat, lon: terminalPoint.lon } : null;
 
-  return { overlays, centerLat, centerLon, zoom, bearingDeg, origin, terminal };
+  return { overlays, gapPath, centerLat, centerLon, zoom, bearingDeg, origin, terminal };
 }
 
 async function fetchGapBaseMap(view) {
@@ -221,7 +230,14 @@ async function renderGapMap(gap, pattern, stop = null) {
     terminalElements.push(...buildTerminalMarker(x, y, TERMINAL_MARKER_RADIUS, glyph));
   }
 
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${WIDTH}" height="${HEIGHT}">${terminalElements.join('\n')}${stopElements.join('\n')}${markerElements.join('\n')}${chipElements.join('\n')}${arrowElements.join('\n')}</svg>`;
+  // Dashed gap stretch in the route's own color, drawn first so it sits under
+  // the markers and labels. Replaces the old solid amber highlight.
+  const gapPixels = (view.gapPath || []).map((p) =>
+    project(p.lat, p.lon, view.centerLat, view.centerLon, view.zoom, WIDTH, HEIGHT),
+  );
+  const gapDash = buildDashedGapSvg(gapPixels, ROUTE_CORE_COLOR, { coreStroke: ROUTE_CORE_STROKE });
+
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${WIDTH}" height="${HEIGHT}">${gapDash}${terminalElements.join('\n')}${stopElements.join('\n')}${markerElements.join('\n')}${chipElements.join('\n')}${arrowElements.join('\n')}</svg>`;
   return sharp(baseMap)
     .resize(WIDTH, HEIGHT)
     .composite([{ input: Buffer.from(svg), top: 0, left: 0 }])

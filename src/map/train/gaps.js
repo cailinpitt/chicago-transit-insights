@@ -8,31 +8,19 @@ const {
   renderTrainBunchingFrame,
 } = require('./bunching');
 
-// Warm amber for the gap strip — pops on the dark basemap without the neon
-// magenta we used to render. Per-line override for Yellow because the route
-// itself is bright yellow (f9e300) and amber would muddy against it; coral
-// reads "alert" against yellow rails. No other line shares amber's hue family.
-const GAP_SEGMENT_DEFAULT_COLOR = 'ffb020';
-const GAP_SEGMENT_COLOR_BY_LINE = { y: 'ff4d6d' };
-const GAP_SEGMENT_STROKE = 10;
-
-function gapSegmentColor(line) {
-  return GAP_SEGMENT_COLOR_BY_LINE[line] || GAP_SEGMENT_DEFAULT_COLOR;
-}
-
 /**
  * Compute a static-map view for a train gap event. Reuses the train bunching
  * framing (bbox, station picks, direction arrow) by treating the leading and
- * trailing trains as a two-train "bunch", then layers a colored highlight
- * along the polyline segment between them so the gap itself reads as the
- * focal element.
+ * trailing trains as a two-train "bunch", then exposes the polyline segment
+ * between them as `gapPath` so the frame renderer can dash it over the route.
  *
  * Diverges from bunching framing in two ways:
  *   1. Strips every station pin/label except the two stations immediately
  *      flanking the gap (one just outside each train). Bunching keeps a dense
- *      pin field for context; gaps want the eye to land on the highlight.
- *   2. Uses an amber/coral highlight instead of the line color so the gap is
- *      visually distinct from the route line below it.
+ *      pin field for context; gaps want the eye to land on the gap stretch.
+ *   2. Renders the gap stretch as a dashed line in the line's own color (drawn
+ *      in the SVG layer by renderTrainBunchingFrame) instead of a solid
+ *      highlight hue, so it reads as a break in the route rather than a stripe.
  */
 function computeTrainGapView(gap, lineColors, trainLines, stations) {
   const bunch = { line: gap.line, trDr: gap.trDr, trains: [gap.leading, gap.trailing] };
@@ -43,10 +31,6 @@ function computeTrainGapView(gap, lineColors, trainLines, stations) {
   const { points, cumDist } = buildLinePolyline(trainLines, gap.line);
   const lo = Math.min(gap.leadingTrackDist, gap.trailingTrackDist);
   const hi = Math.max(gap.leadingTrackDist, gap.trailingTrackDist);
-
-  // Drop every pin overlay the bunching framing added — we'll add back only
-  // the flank pair below. Line-segment paths (path-7+...) are kept.
-  view.overlays = view.overlays.filter((o) => !o.startsWith('pin-'));
 
   // Find the station immediately outside each end of the gap. These act as
   // verbal anchors so a reader can name where the gap starts and ends.
@@ -63,17 +47,13 @@ function computeTrainGapView(gap, lineColors, trainLines, stations) {
     .sort((a, b) => a.trackDist - b.trackDist)[0];
   const flank = [justOutsideLo, justOutsideHi].filter(Boolean).map((s) => s.station);
   const flankNames = new Set(flank.map((s) => s.name));
-
-  for (const s of flank) {
-    view.overlays.push(`pin-s+ffffff(${s.lon.toFixed(5)},${s.lat.toFixed(5)})`);
-  }
   view.visibleStations = view.visibleStations.filter((v) => flankNames.has(v.station.name));
   view.pinStations = view.pinStations.filter((p) => flankNames.has(p.station.name));
 
-  // Anchor the strip at the trains' actual snapped positions, not at whichever
+  // Anchor the boundary at the trains' actual snapped positions, not at whichever
   // polyline vertex happens to fall just inside [lo, hi]. Train polylines have
-  // sparse vertices, so vertex-only filtering visibly ends the strip short of
-  // the train pin (e.g. terminating at Sheridan when the trailing train is at
+  // sparse vertices, so vertex-only filtering visibly ends the line short of the
+  // train pin (e.g. terminating at Sheridan when the trailing train is at
   // Fullerton).
   const loPt = pointAlongLine(points, cumDist, lo);
   const hiPt = pointAlongLine(points, cumDist, hi);
@@ -83,14 +63,27 @@ function computeTrainGapView(gap, lineColors, trainLines, stations) {
     if (cumDist[i] > lo && cumDist[i] < hi) gapPts.push(points[i]);
   }
   if (hiPt) gapPts.push([hiPt.lat, hiPt.lon]);
-  if (gapPts.length >= 2) {
-    // Splice the gap overlay between the line-segment paths and the (now
-    // flank-only) station pins so station markers still sit on top.
-    const firstPinIdx = view.overlays.findIndex((o) => o.startsWith('pin-'));
-    const insertAt = firstPinIdx === -1 ? view.overlays.length : firstPinIdx;
-    const overlay = `path-${GAP_SEGMENT_STROKE}+${gapSegmentColor(gap.line)}(${encodeURIComponent(encode(gapPts))})`;
-    view.overlays.splice(insertAt, 0, overlay);
+
+  // Rebuild the route so it runs solid only *outside* the gap. The gap stretch
+  // is dashed in the line color by the frame renderer (Mapbox static paths can't
+  // dash); leaving the solid line baked underneath would show between the dashes.
+  // Build the two solid slices from the dense polyline with interpolated boundary
+  // points so a sparse raw segment can't bridge the gap.
+  const beforePts = points.filter((_, i) => cumDist[i] <= lo);
+  if (loPt) beforePts.push([loPt.lat, loPt.lon]);
+  const afterPts = [];
+  if (hiPt) afterPts.push([hiPt.lat, hiPt.lon]);
+  for (let i = 0; i < points.length; i++) if (cumDist[i] >= hi) afterPts.push(points[i]);
+  const routeOverlay = (pts) =>
+    pts.length >= 2 ? `path-7+${view.color}-0.7(${encodeURIComponent(encode(pts))})` : null;
+  view.overlays = view.overlays.filter((o) => !o.startsWith('path-') && !o.startsWith('pin-'));
+  view.overlays.unshift(...[routeOverlay(beforePts), routeOverlay(afterPts)].filter(Boolean));
+  for (const s of flank) {
+    view.overlays.push(`pin-s+ffffff(${s.lon.toFixed(5)},${s.lat.toFixed(5)})`);
   }
+
+  // Hand the gap polyline to the frame renderer to dash in the SVG layer.
+  view.gapPath = gapPts.map(([lat, lon]) => ({ lat, lon }));
   return view;
 }
 

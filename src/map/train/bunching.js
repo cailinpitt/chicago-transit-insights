@@ -20,6 +20,7 @@ const {
   buildTerminalMarker,
   buildDirectionArrow,
   buildGhostLegend,
+  buildDashedGapSvg,
   xmlEscape,
   measureTextWidth,
   requireMapboxToken,
@@ -849,11 +850,22 @@ async function renderTrainBunchingFrame(view, baseMap, trains, opts = {}) {
       highlightStation: opts.highlightStation || null,
     },
   );
-  return sharp(baseMap)
-    .resize(WIDTH, HEIGHT)
-    .composite([{ input: Buffer.from(svg), top: 0, left: 0 }])
-    .jpeg({ quality: 85 })
-    .toBuffer();
+  // Gap still maps pass a `gapPath` to dash over the solid route in the line
+  // color (Mapbox static paths can't dash). Composite it as its own layer first
+  // so it sits under the train markers and station labels.
+  const layers = [];
+  if (view.gapPath?.length >= 2) {
+    const gapPixels = view.gapPath.map((p) =>
+      project(p.lat, p.lon, view.centerLat, view.centerLon, view.zoom, WIDTH, HEIGHT),
+    );
+    const gapEls = buildDashedGapSvg(gapPixels, view.color, { coreStroke: 7 });
+    if (gapEls) {
+      const gapSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="${WIDTH}" height="${HEIGHT}">${gapEls}</svg>`;
+      layers.push({ input: Buffer.from(gapSvg), top: 0, left: 0 });
+    }
+  }
+  layers.push({ input: Buffer.from(svg), top: 0, left: 0 });
+  return sharp(baseMap).resize(WIDTH, HEIGHT).composite(layers).jpeg({ quality: 85 }).toBuffer();
 }
 
 async function renderTrainBunching(bunch, lineColors, trainLines, stations, opts = {}) {

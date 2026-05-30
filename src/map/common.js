@@ -134,6 +134,19 @@ function buildStopMarker(x, y, size) {
   return `<svg x="${x - size / 2}" y="${y - size / 2}" width="${size}" height="${size}" viewBox="0 0 36 36">${TWEMOJI_BUS_STOP_INNER}</svg>`;
 }
 
+// Dashed stand-in for the empty gap stretch, drawn in the route/line's own color
+// rather than a separate highlight hue. A single dashed stroke — the callers
+// omit the solid route under this stretch (it isn't baked into the base map),
+// so the dark basemap shows between the dashes with no casing needed. Takes
+// pixel-space points (project the gap polyline first). Returns a bare SVG
+// element — splice it into a layer that sits *under* the vehicle markers.
+function buildDashedGapSvg(points, color, { coreStroke = 8 } = {}) {
+  if (!points || points.length < 2) return '';
+  const pts = points.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ');
+  const dash = `${Math.round(coreStroke * 2.2)} ${Math.round(coreStroke * 1.6)}`;
+  return `<polyline points="${pts}" fill="none" stroke="#${color}" stroke-width="${coreStroke}" stroke-linecap="butt" stroke-linejoin="round" stroke-dasharray="${dash}"/>`;
+}
+
 // Compact form: a small amber dot. Used in video frames where the full
 // sign-and-glyph reads as visual noise on dense routes — the dot still
 // marks "there's a stop here" without taking over the frame.
@@ -487,6 +500,7 @@ module.exports = {
   buildTerminalMarker,
   buildStopMarker,
   buildStopDot,
+  buildDashedGapSvg,
   xmlEscape,
   requireMapboxToken,
   fetchMapboxStatic,
