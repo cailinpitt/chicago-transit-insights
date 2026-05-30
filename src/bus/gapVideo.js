@@ -30,6 +30,19 @@ const TRAIL_MS = 75_000;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// One frame's HUD readout. `deltaFt` is the *signed* distance from the trailing
+// ("Next up") bus to the midpoint wait stop (stopTrack - track): positive while
+// approaching, ~0 at the stop, and negative once the bus has passed and pulled
+// away. Three states so the label tracks the bus past the stop instead of
+// getting stuck on "reaching" forever once it clamps to 0.
+function gapReadout(gapMin, stopName, deltaFt) {
+  const head = `~${gapMin}-min gap · next bus`;
+  if (deltaFt < -ARRIVED_FT) return stopName ? `${head} has left ${stopName}` : `${head} has left`;
+  if (deltaFt <= ARRIVED_FT) return stopName ? `${head} reaching ${stopName}` : `${head} arriving`;
+  const min = Math.max(1, Math.round(deltaFt / TYPICAL_SPEED_FT_PER_MIN));
+  return stopName ? `${head} ~${min} min to ${stopName}` : `${head} ~${min} min`;
+}
+
 function patternLine(pattern) {
   const linePts = pattern.points.map((p) => [p.lat, p.lon]);
   return { linePts, lineCum: cumulativeDistances(pattern.points) };
@@ -118,16 +131,12 @@ async function renderBusGapClip(snapshots, gap, pattern, stop, opts = {}) {
   if (gap.trailing.vid != null) labels.set(gap.trailing.vid, 'N');
   const stopName = stop.stopName || 'the stop';
 
-  // Lead the HUD with the full gap so "next bus ~N min" (which is only the
-  // remaining half — the wait stop is the midpoint) doesn't undersell it. The
-  // wait stop is named by the amber label on the map, so it's dropped here.
+  // Lead the HUD with the full gap so the ticking ETA (which is only the time to
+  // the *midpoint* — the back half of the gap) doesn't undersell it. Name that
+  // midpoint stop in the ETA ("~N min to Foster") so it's clear what the
+  // countdown measures; it matches the amber wait-stop label on the map.
   const gapMin = Math.round(gap.gapMin);
-  function readoutFor(track) {
-    const remaining = Math.max(0, stopTrack - track);
-    if (remaining <= ARRIVED_FT) return `~${gapMin}-min gap · next bus arriving`;
-    const min = Math.max(1, Math.round(remaining / TYPICAL_SPEED_FT_PER_MIN));
-    return `~${gapMin}-min gap · next bus ~${min} min`;
-  }
+  const readoutFor = (track) => gapReadout(gapMin, stop.stopName || null, stopTrack - track);
 
   const vehicleFrames = [];
   const frameTimes = [];
@@ -212,6 +221,7 @@ async function renderBusGapClip(snapshots, gap, pattern, stop, opts = {}) {
 module.exports = {
   captureBusGapVideo,
   renderBusGapClip,
+  gapReadout,
   MAX_APPROACH_FT,
   MIN_APPROACH_FT,
   ARRIVED_FT,

@@ -23,6 +23,34 @@ test('flags a pair beyond threshold with leading/trailing assigned by pdist', ()
   assert.ok(gap.ratio >= 2.5);
 });
 
+test('attaches the stops flanking the gap (just outside each bus)', () => {
+  const points = [
+    { type: 'S', stopName: 'Foster', pdist: 5000, lat: 41.97, lon: -87.66 },
+    { type: 'S', stopName: 'Bryn Mawr', pdist: 9000, lat: 41.98, lon: -87.66 }, // just behind trailing
+    { type: 'W', pdist: 12000 }, // waypoint, ignored
+    { type: 'S', stopName: 'Lawrence', pdist: 18000, lat: 41.97, lon: -87.65 }, // inside gap, ignored
+    { type: 'S', stopName: 'Wilson', pdist: 40000, lat: 41.96, lon: -87.65 }, // just ahead of leading
+    { type: 'S', stopName: 'Sheridan', pdist: 45000, lat: 41.95, lon: -87.65 },
+  ];
+  const pf = () => ({ direction: 'Northbound', lengthFt: 100000, points });
+  const a = bus({ vid: '1', pdist: 10000 });
+  const b = bus({ vid: '2', pdist: 10000 + MIN_QUALIFYING_FT + 1000 }); // ~33000
+  const [gap] = detectAllGaps([a, b], expected, pf, FRESH);
+  assert.equal(gap.flankBefore.stopName, 'Bryn Mawr'); // nearest stop below trailing
+  assert.equal(gap.flankAfter.stopName, 'Wilson'); // nearest stop above leading
+  // Coordinates ride along so the gap map can place the flank labels.
+  assert.equal(gap.flankBefore.lat, 41.98);
+  assert.equal(gap.flankAfter.lon, -87.65);
+});
+
+test('leaves flanks null when the pattern carries no stop points', () => {
+  const a = bus({ vid: '1', pdist: 10000 });
+  const b = bus({ vid: '2', pdist: 10000 + MIN_QUALIFYING_FT + 1000 });
+  const [gap] = detectAllGaps([a, b], expected, patternFor, FRESH);
+  assert.equal(gap.flankBefore, null);
+  assert.equal(gap.flankAfter, null);
+});
+
 test('skips pairs below the absolute minute minimum', () => {
   // Tight 7-min-headway route: ratio is high even at small gaps, but absolute
   // must clear ABSOLUTE_MIN_MIN.

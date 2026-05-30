@@ -28,6 +28,10 @@ function detectAllGaps(vehicles, expectedHeadwayForPid, patternForPid, now = new
     const patternLengthFt = pattern?.lengthFt || 0;
     if (!patternLengthFt) continue;
     const zoneFt = terminalZoneFt(patternLengthFt);
+    // Named stops along the pattern, used to find the pair flanking each gap.
+    const patternStops = (pattern?.points || []).filter(
+      (p) => p.type === 'S' && p.stopName && p.pdist != null,
+    );
 
     for (let i = 0; i < sorted.length - 1; i++) {
       const a = sorted[i];
@@ -44,6 +48,21 @@ function detectAllGaps(vehicles, expectedHeadwayForPid, patternForPid, now = new
       if (gapMin < ABSOLUTE_MIN_MIN) continue;
       if (ratio < RATIO_THRESHOLD) continue;
 
+      // Stops flanking the empty stretch — the stop just *outside* each bus — so
+      // the post can name the gap as a range ("between A and B") instead of
+      // collapsing a multi-mile hole onto one stop. flankBefore sits behind the
+      // trailing bus (a, lower pdist); flankAfter sits ahead of the leading bus
+      // (b, higher pdist).
+      let flankBefore = null;
+      let flankAfter = null;
+      for (const s of patternStops) {
+        if (s.pdist < a.pdist) {
+          if (!flankBefore || s.pdist > flankBefore.pdist) flankBefore = s;
+        } else if (s.pdist > b.pdist) {
+          if (!flankAfter || s.pdist < flankAfter.pdist) flankAfter = s;
+        }
+      }
+
       gaps.push({
         pid,
         route: a.route,
@@ -51,6 +70,22 @@ function detectAllGaps(vehicles, expectedHeadwayForPid, patternForPid, now = new
         // watched it pass and is waiting on `trailing` (a).
         leading: b,
         trailing: a,
+        flankBefore: flankBefore
+          ? {
+              stopName: flankBefore.stopName,
+              pdist: flankBefore.pdist,
+              lat: flankBefore.lat,
+              lon: flankBefore.lon,
+            }
+          : null,
+        flankAfter: flankAfter
+          ? {
+              stopName: flankAfter.stopName,
+              pdist: flankAfter.pdist,
+              lat: flankAfter.lat,
+              lon: flankAfter.lon,
+            }
+          : null,
         gapFt,
         gapMin,
         expectedMin,

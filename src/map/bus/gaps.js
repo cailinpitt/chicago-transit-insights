@@ -25,9 +25,11 @@ const {
 } = require('../common');
 const { isArticulated } = require('../../bus/fleet');
 
-// Magenta highlight for the segment *between* the two bounding buses — that's
-// the stretch of route where a rider would be waiting. Shared with train gaps.
-const GAP_SEGMENT_COLOR = 'ff00ff';
+// Warm amber for the segment *between* the two bounding buses — that's the
+// stretch of route where a rider would be waiting. Matches the train gap strip
+// (src/map/train/gaps.js) so both modes' gap maps read the same; pops on the
+// dark basemap without the neon magenta we used to render.
+const GAP_SEGMENT_COLOR = 'ffb020';
 const GAP_SEGMENT_STROKE = 10;
 const BUS_COLOR = 'ff2a6d';
 const BUS_MARKER_RADIUS = 34;
@@ -76,8 +78,21 @@ function computeGapView(gap, pattern) {
 
   const framePts = framing.length > 0 ? framing : inner;
   const vehicles = [gap.leading, gap.trailing];
-  const allLats = [...framePts.map((p) => p.lat), ...vehicles.map((v) => v.lat)];
-  const allLons = [...framePts.map((p) => p.lon), ...vehicles.map((v) => v.lon)];
+  // Pull the flanking stops into the bbox so both end labels stay on-frame —
+  // they sit just outside each bus and can fall past the context pad otherwise.
+  const flankPts = [gap.flankBefore, gap.flankAfter].filter(
+    (s) => s?.lat != null && s?.lon != null,
+  );
+  const allLats = [
+    ...framePts.map((p) => p.lat),
+    ...vehicles.map((v) => v.lat),
+    ...flankPts.map((s) => s.lat),
+  ];
+  const allLons = [
+    ...framePts.map((p) => p.lon),
+    ...vehicles.map((v) => v.lon),
+    ...flankPts.map((s) => s.lon),
+  ];
   const bbox = {
     minLat: Math.min(...allLats),
     maxLat: Math.max(...allLats),
@@ -141,41 +156,49 @@ async function renderGapMap(gap, pattern, stop = null) {
     markerLabelChip(vehiclePixels[i].x, vehiclePixels[i].y, BUS_MARKER_RADIUS, labels[i]),
   );
 
-  // Anchor stop — names where the wait is happening. (Train gap maps pin the
-  // flanking stations; the bus gap map previously labeled no stop at all even
-  // though the post says "near X".) Push the sign off the route, label below.
+  // Label the stops flanking the gap — one just outside each bus — so the map
+  // names the same stretch the post does ("between A and B"), matching the train
+  // gap map. Falls back to the single anchor stop when flanks are missing, which
+  // mirrors the post's "near X" fallback. Push each sign off the route, label
+  // below.
+  const flankStops = [gap.flankBefore, gap.flankAfter].filter(
+    (s) => s?.lat != null && s?.lon != null,
+  );
+  const labelStops = flankStops.length
+    ? flankStops
+    : stop && stop.lat != null && stop.lon != null
+      ? [stop]
+      : [];
   const stopElements = [];
-  if (stop && stop.lat != null && stop.lon != null) {
+  for (const s of labelStops) {
     const { x, y } = project(
-      stop.lat,
-      stop.lon,
+      s.lat,
+      s.lon,
       view.centerLat,
       view.centerLon,
       view.zoom,
       WIDTH,
       HEIGHT,
     );
-    if (x >= 0 && x <= WIDTH && y >= 0 && y <= HEIGHT) {
-      const perp = perpendicularFromBearing(view.bearingDeg);
-      const sx = x + perp.x * 26;
-      const sy = y + perp.y * 26;
-      stopElements.push(buildStopMarker(sx, sy, 32));
-      const rawName = stop.stopName || '';
-      if (rawName) {
-        const fontSize = 16;
-        const labelH = 26;
-        // Measure actual glyph width (librsvg) instead of guessing per-char —
-        // the heuristic left a wide band of dead padding around shorter names.
-        const textW = await measureTextWidth(rawName, fontSize, { bold: true });
-        const boxW = textW + 16; // 8px padding each side
-        const lx = Math.max(4, Math.min(WIDTH - boxW - 4, sx - boxW / 2));
-        const ly = Math.max(4, Math.min(HEIGHT - labelH - 4, sy + 24));
-        stopElements.push(
-          `<rect x="${lx}" y="${ly}" width="${boxW}" height="${labelH}" fill="#000" fill-opacity="0.8" rx="3"/>`,
-          `<text x="${lx + boxW / 2}" y="${ly + 18}" fill="#fff" text-anchor="middle" font-family="Inter, Helvetica, Arial, sans-serif" font-size="${fontSize}" font-weight="600">${xmlEscape(rawName)}</text>`,
-        );
-      }
-    }
+    if (x < 0 || x > WIDTH || y < 0 || y > HEIGHT) continue;
+    const perp = perpendicularFromBearing(view.bearingDeg);
+    const sx = x + perp.x * 26;
+    const sy = y + perp.y * 26;
+    stopElements.push(buildStopMarker(sx, sy, 32));
+    const rawName = s.stopName || '';
+    if (!rawName) continue;
+    const fontSize = 16;
+    const labelH = 26;
+    // Measure actual glyph width (librsvg) instead of guessing per-char — the
+    // heuristic left a wide band of dead padding around shorter names.
+    const textW = await measureTextWidth(rawName, fontSize, { bold: true });
+    const boxW = textW + 16; // 8px padding each side
+    const lx = Math.max(4, Math.min(WIDTH - boxW - 4, sx - boxW / 2));
+    const ly = Math.max(4, Math.min(HEIGHT - labelH - 4, sy + 24));
+    stopElements.push(
+      `<rect x="${lx}" y="${ly}" width="${boxW}" height="${labelH}" fill="#000" fill-opacity="0.8" rx="3"/>`,
+      `<text x="${lx + boxW / 2}" y="${ly + 18}" fill="#fff" text-anchor="middle" font-family="Inter, Helvetica, Arial, sans-serif" font-size="${fontSize}" font-weight="600">${xmlEscape(rawName)}</text>`,
+    );
   }
   const arrowElements = [buildDirectionArrow(WIDTH - 220, 180, view.bearingDeg)];
 

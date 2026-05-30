@@ -56,7 +56,10 @@ For each pattern (`pid`), we already have `pdist` directly from the API, so:
 2. Sort by `pdist`.
 3. For each adjacent pair: skip if either bus is inside the start/end terminal zone (a route-length-scaled buffer — buses there are doing layovers, not running headways).
 4. Compute `gapMin` and `ratio`. Reject if `gapMin < 15` (absolute floor — protects 30-min-headway routes from spamming on a 31-min drift) or `ratio < 2.5`.
-5. Sort surviving gaps by `ratio` desc — biggest deviations first.
+5. For each surviving gap, find the stops **flanking** it — the named stop just outside each bus (`flankBefore` behind the trailing bus, `flankAfter` ahead of the leading bus, with their lat/lon) — to name the stretch as a range ("between A and B") in the post and label both ends on the map. The post falls back to the single anchor stop ("near X") when a flank is missing.
+6. Sort surviving gaps by `ratio` desc — biggest deviations first.
+
+Both gap maps share the same look: a warm-amber strip over the empty stretch and a pinned, named stop at each flank. They run on different renderers — the train map (`src/map/train/gaps.js`) reuses the bunching frame with Mapbox `pin-s` station pins; the bus map (`src/map/bus/gaps.js`) composites its own bus-stop sign markers — so the marker glyph differs by mode, but the strip color, the flank labeling, and the L/N vehicle chips match.
 
 ### Trains — `src/train/gaps.js`
 
