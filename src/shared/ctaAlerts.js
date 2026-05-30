@@ -407,6 +407,11 @@ const HIGH_SEVERITY_THRESHOLD = 50;
 // event regardless of declared duration.
 const LONG_PLANNED_DURATION_MS = 7 * 24 * 60 * 60 * 1000;
 
+// A named station-to-station segment ("between X and Y"). Strong signal that
+// an alert is segment-scoped service disruption rather than a local blip;
+// reused below to admit rail reroutes that name the rerouted segment.
+const BETWEEN_MAJOR_RE = /\bbetween\s+[A-Z][A-Za-z0-9./&\- ]+\s+and\s+[A-Z]/;
+
 const MAJOR_PATTERNS = [
   /\bno\s+(train|rail|bus|service)\b/i,
   /\bnot\s+running\b/i,
@@ -417,8 +422,24 @@ const MAJOR_PATTERNS = [
   /\bservice\s+(halted|disruption|impacted|impact)\b/i,
   /\bline\s+closed\b/i,
   /\bsingle[-\s]?track/i,
-  /\bbetween\s+[A-Z][A-Za-z0-9./&\- ]+\s+and\s+[A-Z]/,
+  BETWEEN_MAJOR_RE,
 ];
+
+// A precise (non-date-only) event window shorter than the long-planned
+// cutoff, or no usable window at all. Long multi-day/week planned
+// construction sits on the feed for its full duration and is filtered after
+// day 1; unknown/date-only duration admits conservatively (treated as short),
+// matching the prior strict-parser behavior so we don't retroactively drop
+// alerts that used to admit.
+function isWithinPlannedWindow(alert) {
+  const hasPreciseWindow =
+    alert.eventStart != null &&
+    alert.eventEnd != null &&
+    !alert.eventStartIsDateOnly &&
+    !alert.eventEndIsDateOnly;
+  const duration = hasPreciseWindow ? alert.eventEnd - alert.eventStart : null;
+  return duration == null || duration < LONG_PLANNED_DURATION_MS;
+}
 
 const MINOR_PATTERNS = [
   /\breroute[ds]?\b/i,
@@ -487,22 +508,31 @@ function isSignificantAlert(alert) {
       return true;
     }
     const routeCount = (alert.busRoutes?.length || 0) + (alert.trainLines?.length || 0);
-    if (routeCount >= MULTI_ROUTE_THRESHOLD) {
-      // ...except long-duration planned reroutes — multi-route construction
-      // notices that sit on the feed for weeks. Without dates we can't
-      // judge, so admit conservatively (treat unknown duration as short).
-      // A date-only EventStart/EventEnd anchors to end-of-day, so the
-      // arithmetic still produces a number — but that number reflects a
-      // calendar-day window CTA only specified to the day, not a precise
-      // event duration. Treat as unknown here so we don't retroactively
-      // filter out alerts that the prior (strict-parser) behavior admitted.
-      const hasPreciseWindow =
-        alert.eventStart != null &&
-        alert.eventEnd != null &&
-        !alert.eventStartIsDateOnly &&
-        !alert.eventEndIsDateOnly;
-      const duration = hasPreciseWindow ? alert.eventEnd - alert.eventStart : null;
-      if (duration == null || duration < LONG_PLANNED_DURATION_MS) return true;
+    // ...except long-duration planned reroutes — multi-route construction
+    // notices that sit on the feed for weeks (see isWithinPlannedWindow).
+    if (routeCount >= MULTI_ROUTE_THRESHOLD && isWithinPlannedWindow(alert)) {
+      return true;
+    }
+
+    // Rail segment reroutes — a reroute on a train line that names a
+    // station-to-station segment ("rerouted ... between Cermak-Chinatown and
+    // Fullerton") is a real, line-wide service change (subway→elevated track
+    // swaps, weekend segment reroutes), not a local block-party detour. The
+    // `between X and Y` signal is already a MAJOR_PATTERN, but the minor-wins
+    // veto below would reject it on the "reroute" keyword before the MAJOR
+    // check runs. Admit here, gated on the reroute keyword (we're inside the
+    // REROUTE_RE branch) + a train line + the named segment, subject to the
+    // same long-planned cutoff so multi-week rail construction still drops.
+    // Bus-only block-party detours are unaffected (no train line). AlertId
+    // 114934 (2026-05-29) was the missed case: single-route Red reroute, sev
+    // 36, that 114904's near-identical bus-substitution sibling admitted only
+    // because it lacked the "reroute" keyword.
+    if (
+      alert.trainLines?.length &&
+      BETWEEN_MAJOR_RE.test(fullText) &&
+      isWithinPlannedWindow(alert)
+    ) {
+      return true;
     }
   }
 

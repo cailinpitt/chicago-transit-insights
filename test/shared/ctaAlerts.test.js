@@ -450,6 +450,73 @@ test('not significant: sev=55 reroute that CTA itself tags `SeverityCSS=minor`',
   );
 });
 
+test('significant: single-route rail reroute naming a segment (subway→elevated)', () => {
+  // Real alert 114934 from 2026-05-29: all Red Line subway trains rerouted to
+  // the elevated between Cermak-Chinatown and Fullerton for a weekend. Single
+  // route + sev 36 means neither the multi-route nor high-severity reroute
+  // override fires; the "reroute" keyword would veto it before MAJOR_PATTERNS
+  // ran. The rail-segment path admits it: train line + named segment + short
+  // window. A near-identical bus-substitution sibling (114904) already posted
+  // only because it lacked the "reroute" keyword.
+  assert.equal(
+    isSignificantAlert(
+      makeAlert({
+        major: false,
+        severityScore: 36,
+        severityCss: 'planned',
+        impact: 'Planned Work w/Reroute',
+        headline: 'Subway trains rerouted to elevated tracks',
+        shortDescription:
+          'Red Line subway trains will be rerouted to the elevated tracks between Cermak-Chinatown and Fullerton in both directions.',
+        trainLines: ['red'],
+        eventStart: Date.parse('2026-05-29T22:00:00-05:00'),
+        eventEnd: Date.parse('2026-06-01T04:00:00-05:00'),
+      }),
+    ),
+    true,
+  );
+});
+
+test('not significant: long-duration rail reroute naming a segment still drops', () => {
+  // The rail-segment admit honors the same 7-day cutoff as multi-route — a
+  // weeks-long rail construction reroute is a planned notice, not breaking news.
+  assert.equal(
+    isSignificantAlert(
+      makeAlert({
+        major: false,
+        severityScore: 36,
+        severityCss: 'planned',
+        impact: 'Planned Work w/Reroute',
+        headline: 'Brown Line reroute for track renewal',
+        shortDescription:
+          'Brown Line trains rerouted between Belmont and Kimball during a multi-week track renewal project.',
+        trainLines: ['brn'],
+        eventStart: Date.parse('2026-05-01T05:00:00-05:00'),
+        eventEnd: Date.parse('2026-06-20T05:00:00-05:00'),
+      }),
+    ),
+    false,
+  );
+});
+
+test('not significant: bus-only single-route reroute naming a segment (no rail leak)', () => {
+  // The rail-segment path is gated on a train line — a single bus route
+  // reroute that happens to name a segment must still drop as a local detour.
+  assert.equal(
+    isSignificantAlert(
+      makeAlert({
+        major: false,
+        severityScore: 36,
+        headline: 'Temporary Reroute',
+        shortDescription:
+          '#22 Clark buses rerouted between Diversey and Fullerton due to street work.',
+        busRoutes: ['22'],
+      }),
+    ),
+    false,
+  );
+});
+
 test('normalizeAlert parses SeverityCSS and Impact', () => {
   const raw = {
     AlertId: '114870',
