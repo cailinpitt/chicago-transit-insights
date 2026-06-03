@@ -88,6 +88,23 @@ test('observation with no matching alert is a bot-only incident', () => {
   assert.deepEqual(incidents[0].routes, ['red']);
 });
 
+test('buildIncidents preserves affected_stations (cta) and stations (obs)', () => {
+  const a = alert({
+    affected_from_station: 'Belmont',
+    affected_to_station: 'Howard',
+    affected_stations: ['Belmont', 'Addison', 'Wilson', 'Howard'],
+  });
+  const o = obs({ ts: NOW + 5 * 60_000, stations: ['Howard', 'Jarvis', 'Loyola'] });
+  const inc = buildIncidents([a], [o])[0];
+  assert.deepEqual(inc.cta.affected_stations, ['Belmont', 'Addison', 'Wilson', 'Howard']);
+  assert.deepEqual(inc.observations[0].stations, ['Howard', 'Jarvis', 'Loyola']);
+});
+
+test('cta block defaults affected_stations to [] when absent', () => {
+  const inc = buildIncidents([alert()], [])[0];
+  assert.deepEqual(inc.cta.affected_stations, []);
+});
+
 test('normalizes train line short codes to full names on both sides', () => {
   const incidents = buildIncidents(
     [alert({ routes: ['g'], headline: 'Green Line delays' })],

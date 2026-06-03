@@ -1,6 +1,10 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const { isStationOnSegment, normalizeStationName } = require('../../src/shared/trainSegment');
+const {
+  isStationOnSegment,
+  stationsOnSegment,
+  normalizeStationName,
+} = require('../../src/shared/trainSegment');
 
 test('normalizeStationName strips parentheticals + collapses whitespace', () => {
   assert.equal(normalizeStationName('Halsted (Orange)'), 'halsted');
@@ -102,4 +106,49 @@ test('parenthetical line tag in name still resolves', () => {
     }),
     true,
   );
+});
+
+test('stationsOnSegment fills inner stops between the endpoints (brn)', () => {
+  const stops = stationsOnSegment({
+    line: 'brn',
+    fromStation: 'Rockwell',
+    toStation: 'Montrose',
+  });
+  // Endpoints included, inner Western/Damen filled, ordered from → to.
+  assert.deepEqual(stops, ['Rockwell', 'Western (Brown)', 'Damen (Brown)', 'Montrose (Brown)']);
+});
+
+test('stationsOnSegment is order-independent in endpoint args', () => {
+  const fwd = stationsOnSegment({ line: 'brn', fromStation: 'Rockwell', toStation: 'Montrose' });
+  const rev = stationsOnSegment({ line: 'brn', fromStation: 'Montrose', toStation: 'Rockwell' });
+  assert.deepEqual([...fwd].sort(), [...rev].sort());
+});
+
+test('stationsOnSegment does not bleed past the endpoints', () => {
+  const stops = stationsOnSegment({ line: 'brn', fromStation: 'Rockwell', toStation: 'Montrose' });
+  // Kedzie (one stop outside Rockwell) and Irving Park (one stop outside
+  // Montrose) must not be pulled in.
+  assert.ok(!stops.some((s) => s.startsWith('Kedzie')));
+  assert.ok(!stops.some((s) => s.startsWith('Irving Park')));
+});
+
+test('stationsOnSegment picks the right branch on a multi-branch line (blue)', () => {
+  const stops = stationsOnSegment({
+    line: 'blue',
+    fromStation: 'Clark/Lake',
+    toStation: 'Damen',
+  });
+  // Damen (Blue) is on the O'Hare branch; the Forest Park branch must not be
+  // chosen (no Forest Park-branch stops, and Damen resolves to the Blue stop).
+  assert.ok(stops.includes('Clark/Lake'));
+  assert.ok(stops.includes('Damen (Blue)'));
+  assert.ok(!stops.some((s) => s.startsWith('Forest Park')));
+});
+
+test('stationsOnSegment fails closed on unresolved endpoint', () => {
+  assert.deepEqual(
+    stationsOnSegment({ line: 'brn', fromStation: 'Nowhere', toStation: 'Montrose' }),
+    [],
+  );
+  assert.deepEqual(stationsOnSegment({ line: 'brn', fromStation: 'Rockwell' }), []);
 });

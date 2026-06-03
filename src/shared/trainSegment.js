@@ -162,8 +162,82 @@ function isStationOnSegment({
   return tDist >= segMin - buffer && tDist <= segMax + buffer;
 }
 
+// Pick the branch that an endpoint pair actually rides. When `direction`
+// resolves a hint we honor it (same as pickBranch); otherwise — or when the
+// hinted branch doesn't contain both endpoints — fall back to the branch that
+// minimizes the two endpoints' combined perpendicular distance. This is what
+// lets enumeration work on multi-branch lines (red/blue/green) where a bare
+// "between A and B" carries no usable compass and branches[0] may be the wrong
+// fork.
+function pickBranchForEndpoints(branches, line, direction, from, to) {
+  if (branches.length === 0) return null;
+  if (branches.length === 1) return branches[0];
+  const hinted = pickBranch(branches, line, direction);
+  let best = null;
+  let bestPerp = Number.POSITIVE_INFINITY;
+  for (const b of branches) {
+    if (!b?.points?.length) continue;
+    const fp = snapToLineWithPerp(from.lat, from.lon, b.points, b.cumDist).perpDist;
+    const op = snapToLineWithPerp(to.lat, to.lon, b.points, b.cumDist).perpDist;
+    const perp = fp + op;
+    if (perp < bestPerp) {
+      bestPerp = perp;
+      best = b;
+    }
+  }
+  // Prefer the directional hint only when it's also a good geometric fit for
+  // both endpoints (within ~1000 ft each, the off-branch reject threshold used
+  // elsewhere). Otherwise trust the geometry.
+  if (hinted?.points?.length) {
+    const fp = snapToLineWithPerp(from.lat, from.lon, hinted.points, hinted.cumDist).perpDist;
+    const op = snapToLineWithPerp(to.lat, to.lon, hinted.points, hinted.cumDist).perpDist;
+    if (fp <= 1000 && op <= 1000) return hinted;
+  }
+  return best || branches[0];
+}
+
+// Enumerate every roster station on the segment between `fromStation` and
+// `toStation` (inclusive of both endpoints) on `line`, ordered from the `from`
+// end toward the `to` end. This is the inner-station fill that `from`/`to`
+// alone omit — "Rockwell → Montrose" expands to Rockwell, Western, Damen,
+// Montrose so each one can be tied to the incident downstream.
+//
+// Fail-closed (same contract as isStationOnSegment): returns [] if either
+// endpoint can't be resolved or the branch can't be built. The small buffer
+// only guards numeric edge cases at the endpoints — it's well under one stop
+// gap, so the neighbors just outside the segment are not pulled in.
+function stationsOnSegment({ line, direction = null, fromStation, toStation, bufferStops = 0.25 }) {
+  if (!line || !fromStation || !toStation) return [];
+  const from = resolveStation(fromStation, line);
+  const to = resolveStation(toStation, line);
+  if (!from || !to) return [];
+
+  const branches = buildLineBranches(trainLines, line);
+  const branch = pickBranchForEndpoints(branches, line, direction, from, to);
+  if (!branch?.points?.length) return [];
+
+  const fDist = snapToLineWithPerp(from.lat, from.lon, branch.points, branch.cumDist).cumDist;
+  const oDist = snapToLineWithPerp(to.lat, to.lon, branch.points, branch.cumDist).cumDist;
+  const segMin = Math.min(fDist, oDist);
+  const segMax = Math.max(fDist, oDist);
+  const buffer = bufferStops * medianStationGap(branch, line);
+
+  const hits = [];
+  for (const s of trainStations) {
+    if (!s.lines?.includes(line)) continue;
+    const proj = snapToLineWithPerp(s.lat, s.lon, branch.points, branch.cumDist);
+    if (proj.cumDist >= segMin - buffer && proj.cumDist <= segMax + buffer) {
+      hits.push({ name: s.name, d: proj.cumDist });
+    }
+  }
+  // Order along the branch in the from→to direction.
+  hits.sort((a, b) => (fDist <= oDist ? a.d - b.d : b.d - a.d));
+  return hits.map((h) => h.name);
+}
+
 module.exports = {
   isStationOnSegment,
+  stationsOnSegment,
   normalizeStationName,
   resolveStation,
   COMPASS_TO_HINT,

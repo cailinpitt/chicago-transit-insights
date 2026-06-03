@@ -23,6 +23,7 @@ const {
   normalizeTrainLine,
 } = require('../src/shared/observationDescribe');
 const { directionLabel } = require('../src/shared/directionLabel');
+const { stationsOnSegment, normalizePulseDirection } = require('../src/shared/trainSegment');
 
 const DB_PATH =
   process.env.HISTORY_DB_PATH || Path.join(__dirname, '..', 'state', 'history.sqlite');
@@ -63,6 +64,36 @@ function trainLinesFromText(text) {
   return [...found];
 }
 
+// Every roster station on a CTA "between X and Y" alert's affected segment,
+// inclusive of the endpoints. Enumerated per route (a station set differs by
+// line) and unioned, so a Brown-Line "Rockwell → Montrose" alert ties to the
+// inner Western/Damen stops too, not just the two named endpoints. `routes`
+// here are the raw short line keys ('brn'); affected_direction is already one
+// of north/south/east/west/in/out|null, which stationsOnSegment accepts as its
+// branch hint. Empty when there's no segment to enumerate (no from/to, a bus
+// alert, or nothing resolves) — consumers then fall back to the endpoints.
+function affectedStationsForAlert(row) {
+  if (row.kind !== 'train') return [];
+  if (!row.affected_from_station || !row.affected_to_station) return [];
+  const routes = row.routes ? row.routes.split(',').filter(Boolean) : [];
+  const seen = new Set();
+  const out = [];
+  for (const line of routes) {
+    for (const name of stationsOnSegment({
+      line,
+      direction: row.affected_direction ?? null,
+      fromStation: row.affected_from_station,
+      toStation: row.affected_to_station,
+    })) {
+      if (!seen.has(name)) {
+        seen.add(name);
+        out.push(name);
+      }
+    }
+  }
+  return out;
+}
+
 // The CTA-side sub-block of a unified incident; null on bot-only incidents.
 // Carries CTA's own lifecycle (first_seen_ts/resolved_ts/active) separately
 // from the incident-level fields so a consumer can still compute the
@@ -82,6 +113,9 @@ function ctaBlock(alert) {
     affected_to_station: alert.affected_to_station ?? null,
     affected_direction: alert.affected_direction ?? null,
     mentioned_stations: alert.mentioned_stations ?? [],
+    // Full station fill of the affected segment (endpoints + inner stops),
+    // computed upstream so each one can be tied to the incident downstream.
+    affected_stations: alert.affected_stations ?? [],
     cta_event_start_ts: alert.cta_event_start_ts ?? null,
     cta_event_end_ts: alert.cta_event_end_ts ?? null,
     cta_event_start_is_date_only: alert.cta_event_start_is_date_only ?? false,
@@ -383,6 +417,10 @@ function main() {
     // omit the field when empty so the export stays lean and consumers
     // can treat absent and empty identically.
     mentioned_stations: parseStationList(row.mentioned_stations),
+    // Inner-station fill of the "between X and Y" segment (endpoints included),
+    // enumerated per route from the line geometry. Lets stations between the
+    // two named endpoints tie to the incident, not just the endpoints.
+    affected_stations: affectedStationsForAlert(row),
     // CTA's own claimed start/end for the alert. Populated when the alert
     // carried EventStart/EventEnd at fetch time. Survives even if the CTA
     // later scrubs the alert from their `?alertid=` lookup.
@@ -460,6 +498,19 @@ function main() {
     // the renderer never shows a "started here" dot a minute before detection.
     const onsetDescription =
       onsetTs != null && row.ts - onsetTs >= 5 * 60_000 ? describeBotOnset(describeShape) : null;
+    // Full station fill of the observed stretch (endpoints + inner stops), so a
+    // gap from Rockwell → Montrose ties to Western and Damen too. Empty for
+    // roundups (no from/to) and anything that can't be resolved — the field is
+    // omitted then and consumers fall back to from_station/to_station.
+    const segStations =
+      row.kind === 'train'
+        ? stationsOnSegment({
+            line: row.line,
+            direction: normalizePulseDirection(row.direction),
+            fromStation: row.from_station,
+            toStation: row.to_station,
+          })
+        : [];
     return {
       id: row.id,
       kind: row.kind,
@@ -472,6 +523,10 @@ function main() {
       direction_label: directionLabel(row.line, row.direction) ?? null,
       from_station: row.from_station ?? null,
       to_station: row.to_station ?? null,
+      // Every roster stop on the observed stretch, endpoints included (see
+      // segStations above). Omitted when empty so absent and empty read the
+      // same and the export stays lean.
+      ...(segStations.length > 0 ? { stations: segStations } : {}),
       detection_source: detectionSource,
       signals, // e.g. ['gap', 'bunching']
       evidence: row._evidence ?? null,
