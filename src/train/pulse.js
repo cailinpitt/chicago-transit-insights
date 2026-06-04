@@ -45,6 +45,15 @@ const DEFAULT_MIN_SPAN_FRAC = 0.5;
 // admit path. Three trains in a row going missing isn't normal variance.
 const SOLO_EXPECTED_TRAINS = 3;
 
+// Express-overlay margins (Purple — see opts.overlay / trainOverlayInfo).
+// South of the base terminal (Howard): require 1.5× the Express-headway cold
+// threshold so normal sparse Express spacing doesn't post. North of it
+// (Evanston shuttle): short cold runs need 1.25× the blended threshold so a
+// single skipped/bunched shuttle train doesn't post.
+const OVERLAY_SOUTH_MARGIN = 1.5;
+const BASE_SHUTTLE_MARGIN = 1.25;
+const BASE_SHUTTLE_MAX_STATIONS = 3;
+
 // Concrete-onset recovery. A cold run is only detected once it's *already*
 // been cold a while, so the last train through it frequently predates the
 // detection lookback — leaving `lastSeenInRunMs` null and the published onset
@@ -289,6 +298,33 @@ function detectDeadSegments({ line, trainLines, stations, headwayMin, now, opts 
     if (Number.isFinite(activeLo) && Number.isFinite(activeHi) && activeHi > activeLo) {
       corridorLo = Math.max(0, Math.floor(activeLo / binLengthFt));
       corridorHi = Math.min(numBins, Math.ceil(activeHi / binLengthFt));
+    }
+
+    // Express-overlay schedule clip (Purple). South of the base shuttle
+    // terminal (Howard) the line is served only by the peak Express overlay;
+    // gate that stretch on schedule truth rather than observed trains, because
+    // a lone deadhead/return-leg train otherwise props the observed corridor
+    // open and the whole Loop trunk reads cold (the recurring "local vs
+    // express" FP). `overlayCapFt` = base terminal along this branch; "south"
+    // = beyond it toward the Loop (higher cumDist). When this direction's
+    // Express peak isn't live now, clip the corridor at the base terminal so
+    // no south-of-base bin can become a cold run. Stays inert for every line
+    // but Purple (trainOverlayInfo returns null) and for non-direction-split
+    // branches. Used again below to pick the right cold threshold.
+    let overlayCapFt = null;
+    let overlaySouthLive = true;
+    if (opts.overlay && opts.overlay.baseLat != null && directionHint) {
+      const snap = snapToLineWithPerp(opts.overlay.baseLat, opts.overlay.baseLon, points, cumDist);
+      if (snap.perpDist <= MAX_PERP_FT) {
+        overlayCapFt = snap.cumDist;
+        overlaySouthLive =
+          directionHint === 'outbound'
+            ? !!opts.overlay.southLiveOutbound
+            : !!opts.overlay.southLiveInbound;
+        if (!overlaySouthLive) {
+          corridorHi = Math.min(corridorHi, Math.floor(overlayCapFt / binLengthFt));
+        }
+      }
     }
 
     let coveredBins = 0;
@@ -650,6 +686,33 @@ function detectDeadSegments({ line, trainLines, stations, headwayMin, now, opts 
             inLoopTrunk(stLat, stLon);
           if (!inTrunk) directionDestinationName = dest.station.name;
         }
+      }
+    }
+
+    // Express-overlay thresholds (Purple). A cold run that reaches south of the
+    // base shuttle terminal (Howard) during a live Express peak is held to the
+    // *Express* headway, not the blended line headway: Express runs sparser and
+    // faster than the all-day shuttle, so normal Express spacing otherwise nicks
+    // the 15-min floor (the during-rush "local vs express" FPs). Requires a
+    // margin over that threshold and bypasses passLong, so a long-but-normal
+    // Express gap can't auto-admit. Conversely a short cold run entirely north
+    // of Howard is the frequent Evanston shuttle — one skipped/bunched train,
+    // not an outage — so it needs extra margin too unless it's a long run.
+    if (overlayCapFt != null) {
+      const reachesSouth = runHiFt > overlayCapFt;
+      if (reachesSouth && opts.overlay.expressHeadwayMin) {
+        const expressThresholdMs = Math.max(
+          DEFAULT_MIN_COLD_MS,
+          COLD_HEADWAY_MULT * opts.overlay.expressHeadwayMin * 60 * 1000,
+        );
+        if (coldMs < OVERLAY_SOUTH_MARGIN * expressThresholdMs) continue;
+      } else if (
+        !reachesSouth &&
+        coldStations <= BASE_SHUTTLE_MAX_STATIONS &&
+        runLengthFt < minRunFtLong &&
+        coldMs < BASE_SHUTTLE_MARGIN * coldThresholdMs
+      ) {
+        continue;
       }
     }
 

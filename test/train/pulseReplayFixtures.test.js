@@ -15,6 +15,7 @@ const Path = require('node:path');
 
 const { detectDeadSegments } = require('../../src/train/pulse');
 const { detectHeldClusters } = require('../../src/train/heldClusters');
+const { trainOverlayInfo } = require('../../src/shared/gtfs');
 const trainLines = require('../../src/train/data/trainLines.json');
 const trainStations = require('../../src/train/data/trainStations.json');
 
@@ -66,6 +67,7 @@ function runFixture(fixture) {
       lookbackMs,
       recentPositions: motionInputs,
       longLookbackPositions,
+      overlay: trainOverlayInfo(fixture.line, new Date(now)),
     },
   });
 
@@ -87,6 +89,13 @@ const FP_FIXTURES = [
   'purple-2026-05-12-1555-central-noyes',
   'purple-2026-05-14-1015-howard-belmont',
   'purple-2026-05-15-1924-howard-armitage',
+  // Express-overlay corpus (2026-06): the recurring "local vs express" Purple
+  // FPs the schedule-driven overlay clip / express-headway threshold kill.
+  'purple-2026-05-29-0726-belmont-wellington', // off-direction: outbound in AM peak
+  'purple-2026-06-02-0942-diversey-sedgwick', // AM shoulder: Express-headway threshold
+  'purple-2026-06-03-1010-howard-wilson', // past AM Express: corridor clip
+  'purple-2026-06-03-1944-chicago-washingtonwells', // evening Loop trunk: passLong bypass
+  'purple-2026-06-04-0710-noyes-dempster', // Evanston shuttle: base-shuttle margin
 ];
 
 for (const name of FP_FIXTURES) {

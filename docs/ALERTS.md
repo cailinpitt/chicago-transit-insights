@@ -213,8 +213,27 @@ Other gates still apply:
 | Service-corridor clip | bins outside the past-6h observation bbox are excluded from the cold-run scan | The published polyline can include track not in active service today (Purple weekend Express, etc.). Bins outside the corridor are treated as "outside service," not cold. For Purple outside Express service hours, Loop-bound observations are also dropped from the bbox so AM-rush stragglers don't keep the Loop trunk in corridor through the midday shuttle window. |
 | Distinct stations | `fromStation ≠ toStation` | A run that resolves to a single named station can't be described as "X to Y" in a post and produces a degenerate polyline slice that breaks `splitSegments` downstream (NaN bbox → Mapbox 422). Always skip. |
 | Straddle veto | reject if any train's consecutive observations bracket the cold run | At ~3–5 min observer cadence, trains traversing a 1 mi+ run between snapshots leave no in-run observation and look identical to a true outage. Per-train trajectories are tracked on the branch; if any pair of consecutive observations has `along[i-1] < runLoFt && along[i] > runHiFt` (or vice versa), the train physically crossed the run between snapshots and the candidate is dropped. Without this, short station gaps on dense lines (Pink California↔Western, Brown IPark↔Addison) generated FPs because the bin was "never observed" at our sampling rate. |
+| Express-overlay clip (Purple) | south of Howard, gate on schedule truth + Express headway + direction×peak | See below. Kills the recurring "local vs express" Purple FPs. |
 
 `fromStation`/`toStation` are taken from `stationsInRun.filter(s => trackDist >= runLoFt && trackDist <= runHiFt)` — strictly inside the cold run. The previous `nearestStationAtOrBefore`/`After` reach-out could pick named endpoints that lay past the terminal-zone clip, mislabeling the dim segment.
+
+#### Express-overlay clip (Purple)
+
+Purple is two superimposed services on one published Linden→Loop polyline: the **Linden↔Howard shuttle** (all day) and a weekday-rush **Express** overlay continuing Howard→Loop. The observation-based active-range clip alone leaks "cold segment" FPs south of Howard — a single deadhead or return-leg train keeps the observed corridor open even when no scheduled Express is actually serving that stretch in that direction. These were the long-running "local vs express" false positives (e.g. evening Loop-trunk `Chicago→Washington/Wells`, off-direction `Belmont→Wellington` in the AM).
+
+`trainOverlayInfo(line, now)` (`src/shared/gtfs.js`) supplies the schedule truth, passed to `detectDeadSegments` as `opts.overlay`. It's Purple-only (an allowlist; Loop lines like Brown/Orange also ship a round-trip pattern and would otherwise false-match). It derives, from the Express round-trip GTFS pattern (origin ≈ terminal) and the shuttle terminal (Howard):
+
+- **`baseLat/baseLon`** — Howard. South of it (toward the Loop) is Express-only territory.
+- **`expressHeadwayMin`** — the Express pattern's own headway at `now` (sparser than the blended line headway), or null off-peak.
+- **`southLiveInbound` / `southLiveOutbound`** — is south-of-Howard service live *now* for that direction? GTFS gives Purple one round-trip `direction_id` and can't encode that AM Express is inbound-dominant and PM is outbound-dominant, so this is modeled as: inbound live only in the AM Express hours, outbound live only in the PM Express hours.
+
+The detector then:
+
+1. **Corridor clip (A + direction×peak)** — when this branch direction's Express peak isn't live, clip the corridor at Howard so no south-of-Howard bin can become a cold run. Catches evenings, midday, post-9:30 AM, and the off-peak *direction* on a live hour (aggressive: this can miss a real outage on sparse Express return-trips, accepted by design — CTA alerts those anyway).
+2. **Express-headway threshold (B)** — a cold run reaching south of Howard during a live window is held to `OVERLAY_SOUTH_MARGIN × max(15 min, 2.5 × expressHeadwayMin)` rather than the blended threshold, and **bypasses `passLong`**. Normal sparse/fast Express spacing otherwise nicked the 15-min floor; the long evening Loop-trunk runs otherwise auto-admitted via `passLong`.
+3. **Base-shuttle margin (C)** — a short cold run (≤ `BASE_SHUTTLE_MAX_STATIONS`) entirely north of Howard on the frequent Evanston shuttle needs `BASE_SHUTTLE_MARGIN ×` threshold, so one skipped/bunched shuttle train doesn't post.
+
+Margins are tunable constants in `src/train/pulse.js` (`OVERLAY_SOUTH_MARGIN = 1.5`, `BASE_SHUTTLE_MARGIN = 1.25`). The 2026-06 FP corpus in `test/train/fixtures/purple-2026-0{5,6}-*` replays one confirmed FP per bucket through `pulseReplayFixtures.test.js`.
 
 A separate full-line zero-obs branch handles complete blackouts: when a line has zero observations in the lookback while other lines have data and `expectedTrainActiveTrips > 0`, bin synthesizes a full-branch candidate marked `synthetic: true`. The renderer uses synthetic-specific evidence text: *"📡 No trains observed anywhere on the line in the last 20 min."*
 

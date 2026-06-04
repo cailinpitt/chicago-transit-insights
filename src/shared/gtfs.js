@@ -429,6 +429,82 @@ function expectedTrainDispatchesInWindow(line, _trDr, sinceTs, untilTs) {
   return total;
 }
 
+// Peak-only express-overlay model for a line that runs a base shuttle all day
+// plus a rush-hour express continuation. Currently this is *only* Purple:
+// the Linden↔Howard shuttle runs all day, and a weekday-rush Express round
+// trip (Linden→Loop→Linden) overlays on top, serving Howard→Loop only at peak.
+//
+// The cold detector treats the whole Linden→Loop polyline as one corridor
+// gated by *observed* trains, which leaks "cold segment" false positives south
+// of Howard whenever the Express overlay isn't actually serving that stretch
+// in that direction (evenings, midday, off-peak direction on a shoulder hour) —
+// a lone deadhead/return-leg train keeps the observed corridor open. This
+// returns the schedule truth the detector needs to clip / raise-threshold the
+// stretch beyond the base terminal. Returns null for any line without such an
+// overlay (i.e. every line except Purple).
+//
+//   baseLat/baseLon    — base-shuttle terminal (Howard). South of it (toward
+//                        the Loop) is Express-only territory.
+//   expressHeadwayMin  — Express round-trip headway at `now` (null off-peak).
+//   southLiveInbound   — is south-of-base service live NOW for inbound trains
+//                        (toward the Loop)? Express is inbound-dominant AM.
+//   southLiveOutbound  — same for outbound trains (toward the outer terminal);
+//                        Express is outbound-dominant PM.
+// Lines with a base-shuttle + rush-express-overlay structure. Purple is the
+// only one (Evanston Linden↔Howard shuttle + Howard→Loop Express). Loop lines
+// like Brown/Orange encode their main service as a round-trip pattern too, so
+// the structural detection below would otherwise false-match them — the
+// allowlist keeps this scoped to the line the model actually describes.
+const OVERLAY_LINES = new Set(['p']);
+
+function trainOverlayInfo(line, now = new Date()) {
+  if (!OVERLAY_LINES.has(line)) return null;
+  const dir = pickTrainDirInfo(line, null);
+  const patterns = dir?.patterns;
+  if (!Array.isArray(patterns) || patterns.length < 2) return null;
+  const near = (aLat, aLon, bLat, bLon) =>
+    aLat != null &&
+    bLat != null &&
+    haversineFt({ lat: aLat, lon: aLon }, { lat: bLat, lon: bLon }) < 1500;
+  // Overlay = the round-trip pattern (origin ≈ terminal). Shuttles are one-way
+  // (origin ≠ terminal); only Purple's Express starts and ends at the same
+  // outer terminal with the Loop as a mid-trip turn.
+  const overlay = patterns.find((p) =>
+    near(p.originLat, p.originLon, p.terminalLat, p.terminalLon),
+  );
+  if (!overlay) return null;
+  const outerLat = overlay.originLat;
+  const outerLon = overlay.originLon;
+  // Base terminal = the shuttle endpoint that ISN'T the outer terminal (Howard
+  // for Purple — the shuttles run Howard↔Linden).
+  let baseLat = null;
+  let baseLon = null;
+  for (const p of patterns) {
+    if (p === overlay) continue;
+    for (const [la, lo] of [
+      [p.originLat, p.originLon],
+      [p.terminalLat, p.terminalLon],
+    ]) {
+      if (la != null && !near(la, lo, outerLat, outerLon)) {
+        baseLat = la;
+        baseLon = lo;
+      }
+    }
+  }
+  if (baseLat == null) return null;
+  const daytype = dayTypeFor(now);
+  const hour = chicagoHour(now);
+  const serviceHours = Object.keys(overlay.headways?.[daytype] || {}).map(Number);
+  if (serviceHours.length === 0) return null;
+  return {
+    baseLat,
+    baseLon,
+    expressHeadwayMin: interpolatedHourlyLookup(overlay.headways, now),
+    southLiveInbound: hour < 12 && serviceHours.includes(hour),
+    southLiveOutbound: hour >= 12 && serviceHours.includes(hour),
+  };
+}
+
 // Loop lines (Brown/Orange/Pink/Purple/Yellow) ship a single GTFS direction_id
 // covering the full Midway→Loop→Midway round trip. Bi-directional lines
 // (Red/Blue/Green) have two. Ghost detection uses this to decide whether to
@@ -455,6 +531,7 @@ module.exports = {
   expectedTrainActiveTrips,
   expectedTrainActiveTripsAnyDir,
   expectedTrainDispatchesInWindow,
+  trainOverlayInfo,
   isTrainLoopLine,
   resolveDirection,
   matchPattern,

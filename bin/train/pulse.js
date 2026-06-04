@@ -61,6 +61,7 @@ const {
   expectedTrainActiveTrips,
   expectedTrainActiveTripsAnyDir,
   expectedTrainDispatchesInWindow,
+  trainOverlayInfo,
 } = require('../../src/shared/gtfs');
 const { getRecentTrainPositions, getLineCorridorBbox } = require('../../src/shared/observations');
 const { acquireCooldown } = require('../../src/shared/state');
@@ -787,6 +788,7 @@ async function main() {
             trDr: r.trDr,
           })),
           pinnedRanges,
+          overlay: trainOverlayInfo(line, new Date(now)),
         },
       });
     } catch (e) {
