@@ -26,6 +26,9 @@ const CHECKS = {
   'observe-trains': { period: 1 * M, grace: 7 * M },
   // R2 publish loop, every 15 min (pings on no-op exits too).
   'push-web-data': { period: 15 * M, grace: 25 * M },
+  // Event-replay track archiver, every 15 min (downstream of push-web-data;
+  // a missed tick is harmless — it backfills within the 7-day window).
+  'export-event-tracks': { period: 15 * M, grace: 25 * M },
   // Posting bots, every 2 min.
   'bus-alerts': { period: 2 * M, grace: 10 * M },
   'bus-pulse': { period: 2 * M, grace: 10 * M },

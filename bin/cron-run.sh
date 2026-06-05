@@ -18,7 +18,7 @@ printf "\n\n=== $(date) $NAME ===\n" >> "$LOG"
 # simply don't ping. (push-web-data isn't run via this wrapper; it pings from
 # its own script.) No-op entirely unless cron/healthchecks.env exists (see the
 # .example).
-HC_MONITORED="observe-buses observe-trains bus-alerts bus-pulse train-alerts train-pulse bus-bunching bus-gaps bus-ghosts bus-thin-gaps train-bunching train-gaps train-ghosts bus-speedmap train-speedmap fetch-gtfs audit-alerts"
+HC_MONITORED="observe-buses observe-trains bus-alerts bus-pulse train-alerts train-pulse bus-bunching bus-gaps bus-ghosts bus-thin-gaps train-bunching train-gaps train-ghosts bus-speedmap train-speedmap fetch-gtfs audit-alerts export-event-tracks"
 [ -f cron/healthchecks.env ] && . cron/healthchecks.env
 case " $HC_MONITORED " in *" $NAME "*) hc_watched=1 ;; *) hc_watched= ;; esac
 

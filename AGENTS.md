@@ -144,6 +144,7 @@ Four cases (pulse-first/CTA-first/pulse-only/CTA-only) detailed in
 | Bus route lists | `src/bus/routes.js` |
 | Train station/line data | `src/train/data/{trainStations,trainLines}.json` |
 | Audit invariants | `bin/audit-alerts.js` |
+| Event-replay track archiver | `bin/export-event-tracks.js`, `src/shared/eventTracks.js`, `docs/REPLAY.md` |
 | Cron wrapper | `bin/cron-run.sh` |
 
 ## Operational levers (coupled or quota-related only)

@@ -121,6 +121,15 @@ R=/path/to/cta-insights/bin/cron-run.sh
 # PAGES_REPO= — unused since the R2 migration replaced the git-commit-to-Pages
 # flow; omitted here.
 */15    *  *  *  *   CTA_INSIGHTS=/path/to/cta-insights /bin/sh /path/to/cta-insights/bin/push-web-data.sh >> $HOME/Development/cta-alert-history/cron/push-web-data-cron.log 2>&1
+# export-event-tracks: archive per-incident vehicle-position "tracks" to R2 for
+# the event-page replay (EventReplay). Reads the alerts.json push-web-data.sh
+# just wrote to tmp/web-data (falls back to the live origin) + the observations
+# table, and rclones gzipped tracks to the same bucket under tracks/. Manifest-
+# skips incidents already archived after they resolved; active ones re-upload
+# until they do. Offset to :09 so it runs after the :00/:15 push refreshes
+# alerts.json, and stays well inside the 7-day observation rolloff. Uses the
+# same r2web remote as the backups/data push — no new creds. See docs/REPLAY.md.
+9-59/15 *  *  *  *   $R export-event-tracks bin/export-event-tracks.js
 
 # --- Backups ---
 # Off-box backup of state/history.sqlite to Cloudflare R2. Standalone shell
