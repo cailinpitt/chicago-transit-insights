@@ -28,6 +28,12 @@ const { stationsOnSegment, normalizePulseDirection } = require('../src/shared/tr
 const DB_PATH =
   process.env.HISTORY_DB_PATH || Path.join(__dirname, '..', 'state', 'history.sqlite');
 
+// Lowercase a Metra GTFS route_id to its web key ('UP-W' → 'up-w'), matching the
+// frontend's metraLines keys. Mirrors normalizeTrainLine for the Metra mode.
+function normalizeMetraLine(key) {
+  return key == null ? key : String(key).toLowerCase();
+}
+
 // Convert an AT Protocol post URI to a bsky.app URL, or null if the URI is
 // missing / malformed.
 function atUriToUrl(uri) {
@@ -143,14 +149,22 @@ function buildIncidents(builtAlerts, builtObservations) {
   const BUFFER_MS = 2 * 60 * 60 * 1000; // 2h proximity on each side of onset
   const GRACE_MS = 10 * 60 * 1000; // interval-overlap slack
 
-  const alerts = builtAlerts.map((a) =>
-    a.kind === 'train' && Array.isArray(a.routes)
-      ? { ...a, routes: a.routes.map(normalizeTrainLine) }
-      : a,
-  );
-  const observations = builtObservations.map((o) =>
-    o.kind === 'train' && o.line ? { ...o, line: normalizeTrainLine(o.line) } : o,
-  );
+  const alerts = builtAlerts.map((a) => {
+    if (a.kind === 'train' && Array.isArray(a.routes)) {
+      return { ...a, routes: a.routes.map(normalizeTrainLine) };
+    }
+    // Metra routes arrive as raw GTFS route_ids ('UP-W'); the frontend keys
+    // metadata by the lowercase web key ('up-w').
+    if (a.kind === 'metra' && Array.isArray(a.routes)) {
+      return { ...a, routes: a.routes.map(normalizeMetraLine) };
+    }
+    return a;
+  });
+  const observations = builtObservations.map((o) => {
+    if (o.kind === 'train' && o.line) return { ...o, line: normalizeTrainLine(o.line) };
+    if (o.kind === 'metra' && o.line) return { ...o, line: normalizeMetraLine(o.line) };
+    return o;
+  });
 
   const usedObsIds = new Set();
   const incidents = [];
@@ -334,6 +348,21 @@ function main() {
     .prepare(
       `SELECT id, kind, line, ts, post_uri, resolved_ts, resolution_post_uri AS resolved_post_uri, signals, bullets AS bullets_json
        FROM roundup_anchors
+       ORDER BY ts DESC`,
+    )
+    .all();
+
+  // Metra cancellations + delays. Recorded website-data-first (posted=0, no
+  // individual post_uri — the per-trip detail the hourly rollup summarizes), so
+  // unlike the CTA pulse query above this is NOT gated on posted=1. Each row is a
+  // point-in-time event (a train cancelled / a train that ran late).
+  const metraObservations = db
+    .prepare(
+      `SELECT id, kind, line, direction, from_station, to_station, ts,
+              source AS metra_source, evidence AS evidence_json
+       FROM disruption_events
+       WHERE kind = 'metra'
+         AND source IN ('cancellation', 'cancellation-inferred', 'delay')
        ORDER BY ts DESC`,
     )
     .all();
@@ -559,7 +588,45 @@ function main() {
     };
   });
 
-  const incidents = buildIncidents(builtAlerts, builtObservations);
+  // Metra cancellation/delay observations → bot-only incidents. Point events
+  // (a train was cancelled / ran late), so first_seen = resolved = ts and there's
+  // no individual post (the hourly rollup summarizes them). `detection_source`
+  // carries the Metra signal kind the frontend's signal vocab renders.
+  const builtMetraObservations = metraObservations.map((row) => {
+    const ev = parseEvidence(row.evidence_json) || {};
+    const source = row.metra_source; // 'cancellation' | 'cancellation-inferred' | 'delay'
+    const line = normalizeMetraLine(row.line);
+    const train = [ev.scheduledDepLabel, ev.headsign].filter(Boolean).join(' ');
+    const botDescription =
+      source === 'delay'
+        ? `${ev.delayMin ? `~${ev.delayMin} min late` : 'Running late'}${train ? ` — the ${train} train` : ''}`
+        : source === 'cancellation'
+          ? `Cancelled${train ? ` — the ${train} train` : ''}`
+          : `Scheduled train not seen running${train ? ` — the ${train} train` : ''}`;
+    return {
+      id: `metra-${row.id}`,
+      kind: 'metra',
+      line,
+      direction: row.direction ?? null,
+      from_station: row.from_station ?? null,
+      to_station: row.to_station ?? null,
+      detection_source: source,
+      signals: null,
+      evidence: ev,
+      ts: row.ts,
+      // Back-date to the scheduled departure so the timeline reflects when the
+      // train was due, not when the hourly rollup noticed.
+      onset_ts: ev.scheduledDepTs ?? null,
+      resolved_ts: row.ts,
+      duration_ms: null,
+      active: false,
+      post_url: null,
+      resolved_post_url: null,
+      bot_description: botDescription,
+    };
+  });
+
+  const incidents = buildIncidents(builtAlerts, [...builtObservations, ...builtMetraObservations]);
 
   const out = {
     generated_at: Date.now(),
