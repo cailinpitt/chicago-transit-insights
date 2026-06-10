@@ -113,6 +113,11 @@ R=/path/to/cta-insights/bin/cron-run.sh
 # round-robin across the 11 lines. Offset to :30 so it doesn't share a wall minute
 # with bus-/train-speedmap (:00). Reads recorded observations (no live poll).
 30      */2 *  *  *  $R metra-speedmap   bin/metra/speedmap.js
+# metra-cancellations: hourly rollup of confirmed + inferred cancellations per line
+# to @metraalertinsights (ghost cadence; silent when none). Even minute (:14) so it
+# doesn't share a wall minute with metra-alerts (odd minutes) on the same account.
+# Records every cancellation to disruption_events (website-data-first) regardless.
+14      *  *  *  *   $R metra-cancellations bin/metra/cancellations.js
 
 # --- Recaps ---
 20      10 *  *  0   $R bus-recap        bin/bus/recap.js   --window=week
