@@ -474,3 +474,24 @@ test('scheduledDeparturesInWindow resolves a trip to a concrete departure', () =
   assert.strictEqual(t1.destStopId, 'CUS');
   assert.strictEqual(t1.directionId, 1);
 });
+
+test('tripKey strips the service-variant suffix so feed and schedule match', () => {
+  const { tripKey } = require('../../src/metra/schedule');
+  assert.strictEqual(tripKey('BNSF_BN1275_V2_A'), 'BNSF_BN1275_V2');
+  assert.strictEqual(tripKey('BNSF_BN1275_V2_B'), 'BNSF_BN1275_V2');
+  assert.strictEqual(tripKey(null), null);
+});
+
+test('detectCancellations clears an inferred candidate observed under a different suffix', () => {
+  const { tripKey } = require('../../src/metra/schedule');
+  const now = 100 * 60000;
+  // scheduled as _A, observed as _B → must NOT infer once keyOf normalizes.
+  const { inferred } = detectCancellations({
+    candidateTrips: [T('BNSF_BN1275_V2_A', 'BNSF', now - 30 * 60000)],
+    observedTripIds: new Set([tripKey('BNSF_BN1275_V2_B')]),
+    now,
+    feedHealthy: true,
+    keyOf: tripKey,
+  });
+  assert.strictEqual(inferred.length, 0);
+});

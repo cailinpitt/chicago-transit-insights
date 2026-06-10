@@ -14,6 +14,19 @@
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+// Match key that ignores the trailing service-variant letter on a Metra trip_id.
+// Metra's GTFS-realtime feed and the static schedule agree on the run number and
+// version (`BNSF_BN1275_V2`) but DISAGREE on the trailing `_A`/`_B`/… service
+// suffix: the static index resolves today's calendar service to (say) `_A`,
+// while the live feed tags the very same train `_B`. Matching full trip_ids would
+// make every scheduled train look unobserved (→ a flood of false-positive
+// inferred cancellations). Stripping the trailing `_<letter>` gives a stable
+// per-day identity both sides agree on. (The run number is unique within a day,
+// so this can't collide two distinct trains.)
+function tripKey(tripId) {
+  return tripId == null ? tripId : String(tripId).replace(/_[A-Z]$/, '');
+}
+
 // 'YYYYMMDD' Chicago calendar date for an epoch ms.
 function chicagoDateStr(ms) {
   // en-CA formats as YYYY-MM-DD.
@@ -134,6 +147,7 @@ function scheduledDeparturesInWindow(index, fromMs, toMs, now = Date.now()) {
 }
 
 module.exports = {
+  tripKey,
   chicagoDateStr,
   chicagoMidnightMs,
   dayOfWeekIndex,

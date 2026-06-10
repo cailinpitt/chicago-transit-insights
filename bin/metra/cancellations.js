@@ -22,7 +22,11 @@ const Fs = require('node:fs');
 
 const { setup, runBin } = require('../../src/shared/runBin');
 const { detectCancellations, isFeedHealthy } = require('../../src/metra/cancellations');
-const { scheduledDeparturesInWindow, chicagoDateStr } = require('../../src/metra/schedule');
+const {
+  scheduledDeparturesInWindow,
+  chicagoDateStr,
+  tripKey,
+} = require('../../src/metra/schedule');
 const { getMetraAlerts } = require('../../src/metra/api');
 const { lineLabel, LINE_NAMES } = require('../../src/metra/lines');
 const { loginMetraAlerts, postText } = require('../../src/metra/bluesky');
@@ -160,10 +164,13 @@ async function main() {
       },
   );
 
-  // Context sets.
-  const observedTripIds = getMetraObservedTripIds(now - DAY_LOOKBACK_MS);
-  const livePredictionTripIds = getMetraLivePredictionTripIds(now - DAY_LOOKBACK_MS);
-  const alertCoveredTripIds = await fetchAlertCoveredTripIds();
+  // Context sets, normalized into the suffix-agnostic key space (the live feed
+  // tags trips with a different service suffix than the static index — see
+  // schedule.js#tripKey), or every scheduled train reads as unobserved.
+  const keys = (set) => new Set([...set].map(tripKey));
+  const observedTripIds = keys(getMetraObservedTripIds(now - DAY_LOOKBACK_MS));
+  const livePredictionTripIds = keys(getMetraLivePredictionTripIds(now - DAY_LOOKBACK_MS));
+  const alertCoveredTripIds = keys(await fetchAlertCoveredTripIds());
   const feedHealthy = isFeedHealthy(getMetraSnapshotTimestamps(now - 30 * 60 * 1000), now);
   if (!feedHealthy) {
     console.warn('metra cancellations: feed unhealthy — inferred layer suppressed this run');
@@ -178,16 +185,17 @@ async function main() {
     now,
     graceMs: GRACE_MS,
     feedHealthy,
+    keyOf: tripKey,
   });
 
   // Dedup against what's already been recorded this/yesterday's service date so a
   // cancellation logged on an earlier hourly run isn't recorded or counted twice.
-  const recorded = new Set();
+  const recorded = new Set(); // normalized keys, so the suffix difference doesn't defeat dedup
   for (const d of new Set(candidateTrips.map((t) => t.serviceDate).concat(chicagoDateStr(now)))) {
-    for (const id of getMetraCancelledTripIds(d)) recorded.add(id);
+    for (const id of getMetraCancelledTripIds(d)) recorded.add(tripKey(id));
   }
-  const newConfirmed = confirmed.filter((t) => !recorded.has(t.tripId));
-  const newInferred = inferred.filter((t) => !recorded.has(t.tripId));
+  const newConfirmed = confirmed.filter((t) => !recorded.has(tripKey(t.tripId)));
+  const newInferred = inferred.filter((t) => !recorded.has(tripKey(t.tripId)));
 
   console.log(
     `metra cancellations: ${newConfirmed.length} new confirmed, ${newInferred.length} new inferred (feed ${feedHealthy ? 'healthy' : 'STALE'})`,

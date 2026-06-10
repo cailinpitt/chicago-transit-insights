@@ -30,6 +30,10 @@ const DEFAULT_GRACE_MS = 15 * 60 * 1000;
 //   livePredictionTripIds Set<tripId> currently producing real (non-NO_DATA) predictions
 //   alertCoveredTripIds  Set<tripId> named by an active alert (optional)
 //   feedHealthy          bool — when false, the inferred layer is suppressed
+// `keyOf` normalizes a trip_id into the match space shared by the schedule index
+// and the live feed — see src/metra/schedule.js#tripKey. The context Sets
+// (observed/live/alert) MUST already be in that same key space (the bin maps them
+// through keyOf). Default identity keeps the function trivially testable.
 function detectCancellations({
   canceledTrips = [],
   candidateTrips = [],
@@ -39,18 +43,24 @@ function detectCancellations({
   now = Date.now(),
   graceMs = DEFAULT_GRACE_MS,
   feedHealthy = true,
+  keyOf = (id) => id,
 }) {
-  const canceledIds = new Set(canceledTrips.map((t) => t.tripId));
+  const canceledKeys = new Set(canceledTrips.map((t) => keyOf(t.tripId)));
   const confirmed = canceledTrips.map((t) => ({ ...t, source: 'cancellation' }));
 
   let inferred = [];
   if (feedHealthy) {
     inferred = candidateTrips
       .filter((t) => t.scheduledDepMs < now - graceMs)
-      .filter((t) => !canceledIds.has(t.tripId))
-      .filter((t) => !observedTripIds.has(t.tripId))
-      .filter((t) => !livePredictionTripIds.has(t.tripId))
-      .filter((t) => !alertCoveredTripIds.has(t.tripId))
+      .filter((t) => {
+        const k = keyOf(t.tripId);
+        return (
+          !canceledKeys.has(k) &&
+          !observedTripIds.has(k) &&
+          !livePredictionTripIds.has(k) &&
+          !alertCoveredTripIds.has(k)
+        );
+      })
       .map((t) => ({ ...t, source: 'cancellation-inferred' }));
   }
 
