@@ -1,0 +1,64 @@
+{
+  "capturedAt": "2026-06-10T22:58:58.372Z",
+  "note": "Live Metra CANCELED trips captured during a real disruption. tripUpdatesB64/positionsB64 are base64 protobuf FeedMessages — decode with GtfsRealtimeBindings FeedMessage.decode, then parseTripUpdate/parsePosition. canceledEnumValue is the wire int for schedule_relationship=CANCELED.",
+  "canceledEnumValue": 3,
+  "tripUpdatesB64": "Cg0KAzIuMBAAGKjYp9EGEkMKATQaPgouChBNRC1OX01OMjE0MV9WMV9CEggxNzoxODowMBoIMjAyNjA2MTAgAyoETUQtThoGEgQyMTQxIKjYp9EGEjwKAjEwGjYKLgoQQk5TRl9CTjEyNjlfVjJfQhIIMTc6MzA6MDAaCDIwMjYwNjEwIAMqBEJOU0YgqNin0QY=",
+  "positionsB64": "Cg0KAzIuMBAAGJnYp9EGElcKAjY5IlEKLAoOVVAtV19VVzM5X1YyX0ISCDE1OjQwOjAwGggyMDI2MDYxMCADKgRVUC1XEg8NXIcnQhWrSK/CHQAAMkMoktin0QZCCgoEODQ0MxICMzk=",
+  "preview": {
+    "tripUpdates": [
+      {
+        "id": "4",
+        "tripUpdate": {
+          "trip": {
+            "tripId": "MD-N_MN2141_V1_B",
+            "startTime": "17:18:00",
+            "startDate": "20260610",
+            "scheduleRelationship": 3,
+            "routeId": "MD-N"
+          },
+          "vehicle": {
+            "label": "2141"
+          },
+          "timestamp": "1781132328"
+        }
+      },
+      {
+        "id": "10",
+        "tripUpdate": {
+          "trip": {
+            "tripId": "BNSF_BN1269_V2_B",
+            "startTime": "17:30:00",
+            "startDate": "20260610",
+            "scheduleRelationship": 3,
+            "routeId": "BNSF"
+          },
+          "timestamp": "1781132328"
+        }
+      }
+    ],
+    "positions": [
+      {
+        "id": "69",
+        "vehicle": {
+          "trip": {
+            "tripId": "UP-W_UW39_V2_B",
+            "startTime": "15:40:00",
+            "startDate": "20260610",
+            "scheduleRelationship": 3,
+            "routeId": "UP-W"
+          },
+          "position": {
+            "latitude": 41.88218688964844,
+            "longitude": -87.64192962646484,
+            "bearing": 178
+          },
+          "timestamp": "1781132306",
+          "vehicle": {
+            "id": "8443",
+            "label": "39"
+          }
+        }
+      }
+    ]
+  }
+}

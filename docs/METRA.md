@@ -199,7 +199,13 @@ that isn't running. Two layers, mirroring the CTA model (official alert + bot pu
 in `src/metra/cancellations.js`:
 
 - **Confirmed** — Metra flagged the trip: its GTFS-rt `TripDescriptor` carries
-  `schedule_relationship = CANCELED`. Authoritative.
+  `schedule_relationship = CANCELED`. Authoritative. **Verified live 2026-06-10**
+  (weather disruption): the cancellation is encoded as the trip-level enum value `3` on
+  both the tripUpdates *and* positions feeds, and a canceled trip ships **zero**
+  `stopTimeUpdate`s. A captured fixture of real wire bytes
+  (`test/metra/fixtures/canceled-tripupdates.json`, written by
+  `scripts/capture-metra-cancellation.js`) is replayed through `parseTripUpdate` in a
+  regression test, so the decode path is pinned to real data, not just the GTFS-rt spec.
 - **Inferred** — Metra is silent but the schedule disagrees with reality: a scheduled
   trip whose departure passed by a 15-min grace with **no vehicle ever observed, no
   live prediction, no CANCELED flag, and no covering alert**. The true "ghost" — a
@@ -318,6 +324,8 @@ monthly (1st), mirroring bus-/train-recap — see `cron/crontab.txt`.
 - `src/metra/data/{metraLines,metraStations}.json` — generated geometry (committed).
 - `scripts/fetch-metra-gtfs.js` — schedule index + geometry builder.
 - `scripts/observeMetra.js` — live position/trip-update poller.
+- `scripts/capture-metra-cancellation.js` — read-only diagnostic: pulls the live feeds, finds CANCELED trips, writes the wire-bytes fixture.
+- `test/metra/fixtures/canceled-tripupdates.json` — real captured CANCELED trips (base64 protobuf), replayed in the decode regression test.
 - `bin/metra/alerts.js` — alert republish + resolution (cron).
 - `bin/metra/speedmap.js` — speedmap render + post (cron).
 - `src/shared/{history,observations}.js` — `metra_trip_updates`, `trip_id`, record/read helpers.

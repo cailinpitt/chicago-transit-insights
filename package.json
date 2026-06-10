@@ -22,6 +22,7 @@
     "fetch-gtfs": "node scripts/fetch-gtfs.js",
     "fetch-metra-gtfs": "node scripts/fetch-metra-gtfs.js",
     "observe-metra": "node scripts/observeMetra.js",
+    "capture-metra-cancellation": "node scripts/capture-metra-cancellation.js",
     "fetch-signals": "node scripts/fetch-signals.js",
     "speedmap": "node bin/bus/speedmap.js",
     "speedmap:dry": "node bin/bus/speedmap.js --dry-run",

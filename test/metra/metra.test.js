@@ -95,6 +95,38 @@ test('parseTripUpdate maps stop updates and CANCELED relationship', () => {
   assert.strictEqual(tu.stopUpdates[1].delay, 120);
 });
 
+// Real-wire regression: replay a fixture of LIVE CANCELED trips (captured from
+// the Metra feed during a 2026-06-10 weather disruption via
+// scripts/capture-metra-cancellation.js) through the FULL decode path —
+// FeedMessage.decode of the actual protobuf bytes → parseTripUpdate. Confirms
+// Metra really encodes cancellations as trip-level schedule_relationship=CANCELED
+// (enum 3), not via an alert or stop-level flags, and that a canceled trip
+// carries zero stopTimeUpdates on the wire. This was the Phase 0 open item.
+test('decodes a real captured CANCELED trip from raw feed bytes', () => {
+  const { transit_realtime } = require('gtfs-realtime-bindings');
+  const fixture = require('./fixtures/canceled-tripupdates.json');
+
+  assert.strictEqual(fixture.canceledEnumValue, 3, 'CANCELED is wire enum 3');
+
+  const tuFeed = transit_realtime.FeedMessage.decode(Buffer.from(fixture.tripUpdatesB64, 'base64'));
+  const updates = tuFeed.entity.map(parseTripUpdate);
+  assert.ok(updates.length >= 1, 'fixture has at least one canceled tripUpdate');
+  for (const u of updates) {
+    assert.strictEqual(u.scheduleRelationship, 'CANCELED');
+    assert.ok(u.tripId && u.routeId, 'canceled trip still carries trip + route ids');
+    assert.strictEqual(u.stopUpdates.length, 0, 'a canceled trip ships no stop updates');
+  }
+
+  if (fixture.positionsB64) {
+    const posFeed = transit_realtime.FeedMessage.decode(
+      Buffer.from(fixture.positionsB64, 'base64'),
+    );
+    for (const p of posFeed.entity.map(parsePosition)) {
+      assert.strictEqual(p.scheduleRelationship, 'CANCELED');
+    }
+  }
+});
+
 test('parseAlert extracts informed entity, effect, and translated text', () => {
   const entity = {
     id: 'DevAPI-1',
