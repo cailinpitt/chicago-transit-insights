@@ -424,6 +424,21 @@ test('tally caps long lists so the post stays under the limit', () => {
 
 // --- delays detector ---
 
+test('computeMaxDelays derives delay from predicted − scheduled, worst stop per trip', () => {
+  const { computeMaxDelays } = require('../../src/metra/delays');
+  // scheduled: A@1000s, B@1200s. Trip T predicted A late by 1200s, B late by 1320s.
+  const sched = { 'T|A': 1000, 'T|B': 1200 };
+  const scheduledArrFor = (trip, stop) => sched[`${trip}|${stop}`] ?? null;
+  const rows = [
+    { tripId: 'T', route: 'BNSF', stopId: 'A', predictedArr: 2200 }, // +1200s
+    { tripId: 'T', route: 'BNSF', stopId: 'B', predictedArr: 2520 }, // +1320s (worst)
+    { tripId: 'T', route: 'BNSF', stopId: 'Z', predictedArr: 9999 }, // unknown stop → ignored
+  ];
+  const out = computeMaxDelays(rows, scheduledArrFor);
+  assert.strictEqual(out.length, 1);
+  assert.strictEqual(out[0].maxDelay, 1320);
+});
+
 test('significantDelays keeps trains at/over the threshold and sorts worst-first', () => {
   const { significantDelays, DELAY_THRESHOLD_SEC } = require('../../src/metra/delays');
   const rows = [

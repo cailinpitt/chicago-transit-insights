@@ -26,10 +26,15 @@ const Fs = require('node:fs');
 
 const { setup, runBin } = require('../../src/shared/runBin');
 const { detectCancellations, isFeedHealthy } = require('../../src/metra/cancellations');
-const { significantDelays, DELAY_THRESHOLD_SEC } = require('../../src/metra/delays');
+const {
+  computeMaxDelays,
+  significantDelays,
+  DELAY_THRESHOLD_SEC,
+} = require('../../src/metra/delays');
 const {
   scheduledDeparturesInWindow,
   chicagoDateStr,
+  chicagoMidnightMs,
   tripKey,
 } = require('../../src/metra/schedule');
 const { getMetraAlerts } = require('../../src/metra/api');
@@ -39,7 +44,7 @@ const {
   getMetraCanceledTrips,
   getMetraObservedTripIds,
   getMetraLivePredictionTripIds,
-  getMetraTripMaxDelays,
+  getMetraLatestPredictions,
   getMetraSnapshotTimestamps,
 } = require('../../src/shared/observations');
 const { recordDisruption, getMetraRecordedTripIds } = require('../../src/shared/history');
@@ -199,10 +204,23 @@ async function main() {
     keyOf: tripKey,
   });
 
-  // Delays: trains that hit 15+ min late this hour (worst delay per trip), enriched
-  // with schedule info. A delayed train is running (it has predictions), so this
-  // set is disjoint from cancellations.
-  const delaysDetected = significantDelays(getMetraTripMaxDelays(now - ROLLUP_WINDOW_MS));
+  // Delays: trains that hit 15+ min late this hour. Metra's feed delay field is
+  // always 0, so we compute delay = predicted − scheduled ourselves. The resolver
+  // maps a realtime (trip, stop) to its scheduled arrival POSIX via the static
+  // index (trip matched suffix-agnostically; stop by id; serviceDate → midnight).
+  const scheduledArrFor = (rtTripId, stopId) => {
+    const rec = tripByKey.get(tripKey(rtTripId));
+    if (!rec) return null;
+    const staticTrip = index.trips[rec.tripId];
+    const st = staticTrip?.stop_times?.find((s) => s.stop_id === stopId);
+    if (st?.arrival == null) return null;
+    return chicagoMidnightMs(rec.serviceDate) / 1000 + st.arrival;
+  };
+  const maxDelays = computeMaxDelays(
+    getMetraLatestPredictions(now - ROLLUP_WINDOW_MS),
+    scheduledArrFor,
+  );
+  const delaysDetected = significantDelays(maxDelays);
 
   // Dedup against what's already been recorded for the relevant service dates, so
   // an event logged on an earlier hourly run isn't recorded or counted twice.
