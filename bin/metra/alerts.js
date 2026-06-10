@@ -19,6 +19,7 @@ const {
   buildMetraAlertText,
   buildMetraResolutionText,
 } = require('../../src/metra/metraAlerts');
+const { extractMetraStations } = require('../../src/metra/metraStations');
 const { loginMetraAlerts, postText, resolveReplyRef } = require('../../src/metra/bluesky');
 const {
   getAlertPost,
@@ -39,6 +40,13 @@ function routesFor(alert) {
   return alertRelevance(alert).lines.join(',');
 }
 
+// Canonical Metra station names referenced in the alert text — resolved upstream
+// (with the friendly→GTFS terminal alias map) so the frontend can render them as
+// links without re-parsing free text.
+function mentionedFor(alert) {
+  return extractMetraStations([alert.header, alert.description].filter(Boolean).join(' \n '));
+}
+
 async function postNewAlert(alert, agentGetter) {
   const routes = routesFor(alert);
   const text = buildMetraAlertText(alert);
@@ -47,6 +55,8 @@ async function postNewAlert(alert, agentGetter) {
     console.log(`--- DRY RUN metra alert ${alert.id} (DB write skipped) ---\n${text}\n`);
     return;
   }
+
+  const mentionedStations = mentionedFor(alert);
 
   // Pre-post write (postUri:null) so a crash between posting and the post-post
   // write is still detectable — mirrors the CTA invariant.
@@ -57,6 +67,7 @@ async function postNewAlert(alert, agentGetter) {
     headline: alert.header,
     shortDescription: alert.description || null,
     postUri: null,
+    mentionedStations,
   });
 
   const agent = await agentGetter();
@@ -69,6 +80,7 @@ async function postNewAlert(alert, agentGetter) {
     headline: alert.header,
     shortDescription: alert.description || null,
     postUri: result.uri,
+    mentionedStations,
   });
 }
 
@@ -131,6 +143,9 @@ async function main() {
           headline: alert.header,
           shortDescription: alert.description || null,
           postUri: null,
+          // Backfill mentioned stations on re-sight so alerts posted before this
+          // shipped pick them up without a new post.
+          mentionedStations: mentionedFor(alert),
         });
       }
       continue;

@@ -536,3 +536,21 @@ test('detectCancellations clears an inferred candidate observed under a differen
   });
   assert.strictEqual(inferred.length, 0);
 });
+
+// --- station extraction (upstream resolve of friendly names → GTFS) ---
+
+test('extractMetraStations resolves friendly terminal names + roster stops', () => {
+  const { extractMetraStations } = require('../../src/metra/metraStations');
+  assert.deepStrictEqual(extractMetraStations('arrive Ogilvie Transportation Center at 8:28 PM'), [
+    'Chicago OTC',
+  ]);
+  assert.deepStrictEqual(extractMetraStations('express from Cicero to Chicago Union Station'), [
+    'Chicago Union Station',
+    'Cicero',
+  ]);
+  // "Union Station" (friendly) also resolves to the GTFS name.
+  assert.deepStrictEqual(extractMetraStations('delays into Union Station'), [
+    'Chicago Union Station',
+  ]);
+  assert.deepStrictEqual(extractMetraStations('no stations here'), []);
+});
