@@ -24,6 +24,12 @@ const {
 } = require('../../src/metra/speedmap');
 const { detectCancellations, isFeedHealthy } = require('../../src/metra/cancellations');
 const { activeServiceIds, scheduledDeparturesInWindow } = require('../../src/metra/schedule');
+const {
+  classifyCancellationAlert,
+  isCancellationText,
+  runNumberFromTripId,
+  extractTrainNumbers,
+} = require('../../src/metra/cancellationAlert');
 const { tally, buildRollupText } = require('../../bin/metra/cancellations');
 
 // --- lines.js ---
@@ -607,4 +613,178 @@ test('extractMetraStations resolves friendly terminal names + roster stops', () 
     'Chicago Union Station',
   ]);
   assert.deepStrictEqual(extractMetraStations('no stations here'), []);
+});
+
+// --- single-train cancellation classifier (schedule-anchored lifecycle) ---
+
+// Minimal schedule index in the real index.json shape: weekday (WK) service, two
+// cancellable trains with real-format trip_ids, and named origin stops.
+function cancelIndex() {
+  return {
+    calendar: {
+      WK: {
+        days: [true, true, true, true, true, false, false],
+        start_date: '20260101',
+        end_date: '20261231',
+      },
+    },
+    calendarDates: [],
+    stops: {
+      OTC: { name: 'Chicago OTC', lat: 41.88, lon: -87.64 },
+      GENEVA: { name: 'Geneva', lat: 41.88, lon: -88.31 },
+      CUS: { name: 'Chicago Union Station', lat: 41.87, lon: -87.64 },
+      FOXLAKE: { name: 'Fox Lake', lat: 42.39, lon: -88.18 },
+    },
+    trips: {
+      // UP-W #67: 20:40 OTC → 22:08 Geneva (the live #67 example).
+      'UP-W_UW67_V1_B': {
+        route_id: 'UP-W',
+        service_id: 'WK',
+        headsign: 'Elburn',
+        direction_id: 0,
+        stop_times: [
+          { stop_id: 'OTC', stop_sequence: 1, departure: 74400 }, // 20:40
+          { stop_id: 'GENEVA', stop_sequence: 20, arrival: 79680 }, // 22:08
+        ],
+      },
+      // MD-N #2145: 06:30 CUS → 07:45 Fox Lake (informed-entity tripId path).
+      'MD-N_MN2145_V2_B': {
+        route_id: 'MD-N',
+        service_id: 'WK',
+        headsign: 'Fox Lake',
+        direction_id: 0,
+        stop_times: [
+          { stop_id: 'CUS', stop_sequence: 1, departure: 23400 }, // 06:30
+          { stop_id: 'FOXLAKE', stop_sequence: 18, arrival: 27900 }, // 07:45
+        ],
+      },
+    },
+  };
+}
+
+// Tuesday 2026-06-09 21:00 America/Chicago (CDT, UTC-5) — same service day as #67.
+const CANCEL_NOW = Date.UTC(2026, 5, 10, 2, 0, 0);
+
+function chiHourMin(ms) {
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Chicago',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).format(new Date(ms));
+}
+
+function mkAlert({ header, description = null, routes = [], tripIds = [] }) {
+  const informedEntities = [
+    ...routes.map((r) => ({ agencyId: null, routeId: r, stopId: null, tripId: null })),
+    ...tripIds.map((t) => ({ agencyId: null, routeId: null, stopId: null, tripId: t })),
+  ];
+  return { id: 'DevAPI-TEST', header, description, informedEntities };
+}
+
+test('runNumberFromTripId extracts the run number from a static trip_id', () => {
+  assert.strictEqual(runNumberFromTripId('UP-W_UW67_V1_B'), '67');
+  assert.strictEqual(runNumberFromTripId('MD-N_MN2145_V2_B'), '2145');
+  assert.strictEqual(runNumberFromTripId('SWS_SW823_V4_B'), '823');
+  assert.strictEqual(runNumberFromTripId(null), null);
+});
+
+test('extractTrainNumbers reads numbers from the header, not the description', () => {
+  assert.deepStrictEqual(extractTrainNumbers('UPW train #67 will not operate'), ['67']);
+  assert.deepStrictEqual(extractTrainNumbers('MDN 2145 - Will Not Operate'), ['2145']);
+  assert.deepStrictEqual(extractTrainNumbers('MED Train #140 Annulled'), ['140']);
+  // multi-train notice → both, so the caller declines to finite-track it.
+  assert.deepStrictEqual(extractTrainNumbers('Trains #67 and #69 cancelled'), ['67', '69']);
+});
+
+test('isCancellationText admits annulment language, rejects delays', () => {
+  assert.ok(isCancellationText('UPW train #67 will not operate'));
+  assert.ok(isCancellationText('MED Train #140 Annulled'));
+  assert.ok(!isCancellationText('BNSF 22 to 27 minutes behind schedule'));
+});
+
+test('classify resolves a single-train cancellation from the header (#67)', () => {
+  const alert = mkAlert({
+    header: 'UPW train #67 will not operate',
+    description:
+      'UPW train #67 scheduled to depart Ogilvie Transportation Center at 8:40 pm will not operate due to high wind warnings.',
+    routes: ['UP-W'],
+  });
+  const r = classifyCancellationAlert({ alert, index: cancelIndex(), now: CANCEL_NOW });
+  assert.ok(r, 'classified');
+  assert.strictEqual(r.route, 'UP-W');
+  assert.strictEqual(r.trainNumber, '67');
+  assert.strictEqual(r.tripId, 'UP-W_UW67_V1_B');
+  assert.strictEqual(r.serviceDate, '20260609');
+  assert.strictEqual(r.origin, 'Chicago OTC');
+  assert.strictEqual(chiHourMin(r.scheduledDepMs), '20:40');
+  assert.strictEqual(chiHourMin(r.scheduledArrMs), '22:08');
+});
+
+test('classify resolves via the informed-entity tripId when the header has no number', () => {
+  const alert = mkAlert({
+    header: 'Train Annulled',
+    routes: ['MD-N'],
+    tripIds: ['MD-N_MN2145_V2_A'], // feed suffix (_A) differs from the static _B
+  });
+  const r = classifyCancellationAlert({ alert, index: cancelIndex(), now: CANCEL_NOW });
+  assert.ok(r, 'classified via tripId');
+  assert.strictEqual(r.trainNumber, '2145');
+  assert.strictEqual(r.tripId, 'MD-N_MN2145_V2_B'); // resolved to the static variant
+  assert.strictEqual(chiHourMin(r.scheduledDepMs), '06:30');
+});
+
+test('classify returns null for a delay alert (not a cancellation)', () => {
+  const alert = mkAlert({
+    header: 'UPW train #67 running 25 minutes late',
+    routes: ['UP-W'],
+  });
+  assert.strictEqual(
+    classifyCancellationAlert({ alert, index: cancelIndex(), now: CANCEL_NOW }),
+    null,
+  );
+});
+
+test('classify returns null for an open-ended suspension with no resolvable train', () => {
+  const alert = mkAlert({
+    header: 'No UP-W inbound service due to police activity',
+    routes: ['UP-W'],
+  });
+  assert.strictEqual(
+    classifyCancellationAlert({ alert, index: cancelIndex(), now: CANCEL_NOW }),
+    null,
+  );
+});
+
+test('classify returns null for a multi-train cancellation', () => {
+  const alert = mkAlert({
+    header: 'UPW trains #67 and #69 will not operate',
+    routes: ['UP-W'],
+  });
+  assert.strictEqual(
+    classifyCancellationAlert({ alert, index: cancelIndex(), now: CANCEL_NOW }),
+    null,
+  );
+});
+
+test('classify returns null when the train number does not resolve to a scheduled trip', () => {
+  const alert = mkAlert({
+    header: 'UPW train #9999 will not operate',
+    routes: ['UP-W'],
+  });
+  assert.strictEqual(
+    classifyCancellationAlert({ alert, index: cancelIndex(), now: CANCEL_NOW }),
+    null,
+  );
+});
+
+test('classify returns null when the alert spans more than one route', () => {
+  const alert = mkAlert({
+    header: 'Train #67 will not operate',
+    routes: ['UP-W', 'UP-NW'],
+  });
+  assert.strictEqual(
+    classifyCancellationAlert({ alert, index: cancelIndex(), now: CANCEL_NOW }),
+    null,
+  );
 });

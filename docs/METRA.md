@@ -150,6 +150,55 @@ rkey, and `buildMetraResolutionCardTitle` is the emoji-free card headline. The
 `/resolved` suffix targets the "Archived" OG variant the frontend prerenders, so the
 card thumbnail reads as resolved rather than active.
 
+#### Single-train cancellation lifecycle — schedule-anchored, not feed-anchored
+
+A Metra alert that annuls **exactly one scheduled train** ("UPW train #67 will not
+operate", "MED Train #140 Annulled") gets a fundamentally different lifecycle from an
+open-ended notice. The default republish model keeps an alert *ongoing* until Metra
+drops it from the GTFS-rt feed — but for a cancellation that's wrong on both ends:
+Metra leaves these on the wire for hours past the train's moment (and even pulls them
+from metra.com while leaving them in GTFS-rt, observed live 2026-06-10), and a
+cancelled train never "resolves" — it simply doesn't run. So we anchor the event to
+the **timetable** instead of the feed.
+
+- **Classify** — `src/metra/cancellationAlert.js#classifyCancellationAlert` resolves
+  the alert to the one trip it annuls: train number from the header (`#67`), route
+  from `informed_entity`, matched against the GTFS index for the alert's service day
+  (an `informed_entity.trip_id`, when present, is a fallback for the number). It
+  returns the trip's scheduled departure/arrival/origin, or `null` for delays,
+  multi-train notices, open-ended suspensions, or anything that doesn't resolve to a
+  single trip — those keep the ordinary ongoing→resolved model (where "resolved"
+  correctly means service restored). Calibrated live 2026-06-10: 9/9 annulments
+  resolved, all delay/multi-train notices declined.
+- **State** — `alert_posts.cancel_state` is `'upcoming'` (announced, before the
+  scheduled departure) → `'cancelled'` (departure passed; terminal), with
+  `cancel_dep_ts`/`cancel_arr_ts`/`cancel_train_no`/`cancel_origin` carrying the
+  timetable. `recordCancellation` sets the window + initial state;
+  `finalizeCancellation` flips to `'cancelled'` and stamps `resolved_ts =
+  max(cancel_dep_ts, first_seen_ts)` so the row leaves `listUnresolvedAlerts` and
+  **never reaches the feed-drop "resolved" sweep** (which `bin/metra/alerts.js` skips
+  for any row with `cancel_dep_ts` set). The clamp keeps `resolved_ts ≥ first_seen_ts`
+  so an annulment announced *after* departure never yields a negative duration.
+- **Bin flow** (`bin/metra/alerts.js`) — a new single-train cancellation posts as
+  usual, then records the window. If departure is already past at first sight (#67),
+  it finalizes **silently** — the original post already says the train won't run. An
+  advance cancellation (#678) stays `'upcoming'`; a feed-independent sweep
+  (`sweepCancellationCloses`, run even on an empty feed) posts a **neutral** threaded
+  note — *"ℹ️ This train's scheduled departure time has passed."*
+  (`buildMetraCancellationCloseText`, deliberately not the "✅ resolved" reply) and
+  finalizes when the scheduled departure arrives.
+- **Watch item** — schedule-finalize fires regardless of the feed, so if Metra
+  announces a cancellation and the train *actually runs* (rare), it's still marked
+  cancelled. The confirmed `schedule_relationship = CANCELED` trip-update flag (the
+  Phase 2 detector) is the stronger signal; reconciling the two is a later refinement.
+- **Backfill** — `bin/backfill-metra-cancellations.js` reclassifies metra alert rows
+  captured before this shipped (idempotent, `--dry-run` aware), resolving each on its
+  own service day and finalizing the past ones.
+- **Export** — `bin/export-web.js` ships a `cta.cancellation` object on the incident
+  (`state`, `scheduled_departure_ts`, `scheduled_arrival_ts`, `train_number`,
+  `origin`); the frontend renders the state + window directly. See the data-API
+  changelog (cta-alert-history `public/data/CHANGELOG.md`, 2026-06-11).
+
 The significance gate (`isSignificantMetraAlert`) is **keyword-driven**, because Metra
 sets `effect = UNKNOWN_EFFECT` on essentially every alert — gating on `effect` alone
 would admit nothing. Over the header + description:
@@ -318,7 +367,8 @@ monthly (1st), mirroring bus-/train-recap — see `cron/crontab.txt`.
 - `src/metra/lines.js` — line metadata + helpers.
 - `src/metra/api.js` — GTFS-rt fetch + protobuf decode + normalizers.
 - `src/metra/bluesky.js` — `loginMetra` + `loginMetraAlerts`.
-- `src/metra/metraAlerts.js` — alert significance gate + post/resolution text.
+- `src/metra/metraAlerts.js` — alert significance gate + post/resolution/cancellation-close text.
+- `src/metra/cancellationAlert.js` — single-train cancellation classifier (alert → scheduled trip).
 - `src/metra/speedmap.js` — corridor builder + DB-based speed sampling.
 - `src/map/metra/speedmap.js` — Metra-colored speedmap renderer.
 - `src/metra/cancellations.js` — confirmed + inferred cancellation detector + feed-health guard.
@@ -333,7 +383,8 @@ monthly (1st), mirroring bus-/train-recap — see `cron/crontab.txt`.
 - `scripts/observeMetra.js` — live position/trip-update poller.
 - `scripts/capture-metra-cancellation.js` — read-only diagnostic: pulls the live feeds, finds CANCELED trips, writes the wire-bytes fixture.
 - `test/metra/fixtures/canceled-tripupdates.json` — real captured CANCELED trips (base64 protobuf), replayed in the decode regression test.
-- `bin/metra/alerts.js` — alert republish + resolution (cron).
+- `bin/metra/alerts.js` — alert republish + resolution + single-train cancellation lifecycle (cron).
+- `bin/backfill-metra-cancellations.js` — one-off backfill of the cancellation columns on pre-existing alerts.
 - `bin/metra/speedmap.js` — speedmap render + post (cron).
 - `src/shared/{history,observations}.js` — `metra_trip_updates`, `trip_id`, record/read helpers.
 - `test/metra/metra.test.js` — unit tests for the pure helpers/normalizers/gates.

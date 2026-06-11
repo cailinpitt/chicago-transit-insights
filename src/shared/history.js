@@ -352,6 +352,34 @@ function db() {
   if (!alertCols.includes('mentioned_stations')) {
     _db.exec('ALTER TABLE alert_posts ADD COLUMN mentioned_stations TEXT');
   }
+  // Single-train Metra cancellation lifecycle (kind='metra'). When an alert
+  // annuls exactly one scheduled train, classifyCancellationAlert resolves it to
+  // that trip's timetable so the event is anchored to the SCHEDULE, not to Metra's
+  // GTFS-rt feed (which leaves cancellations on the wire for hours and drifts out
+  // of sync with metra.com). `cancel_state` is the rider-facing label the export
+  // ships verbatim — 'upcoming' (announced, before the scheduled departure) →
+  // 'cancelled' (departure has passed; terminal). `cancel_dep_ts`/`cancel_arr_ts`
+  // are the scheduled origin departure / final arrival; `cancel_train_no` and
+  // `cancel_origin` are the train number and origin station for display. On
+  // finalize we also stamp `resolved_ts` (the generic "event ended" marker) so the
+  // row leaves listUnresolvedAlerts and never reaches the feed-drop "resolved"
+  // sweep — a cancelled train doesn't un-cancel. `cancel_state` IS NULL for every
+  // non-cancellation alert (open-ended notices keep the ongoing→resolved model).
+  if (!alertCols.includes('cancel_state')) {
+    _db.exec('ALTER TABLE alert_posts ADD COLUMN cancel_state TEXT');
+  }
+  if (!alertCols.includes('cancel_dep_ts')) {
+    _db.exec('ALTER TABLE alert_posts ADD COLUMN cancel_dep_ts INTEGER');
+  }
+  if (!alertCols.includes('cancel_arr_ts')) {
+    _db.exec('ALTER TABLE alert_posts ADD COLUMN cancel_arr_ts INTEGER');
+  }
+  if (!alertCols.includes('cancel_train_no')) {
+    _db.exec('ALTER TABLE alert_posts ADD COLUMN cancel_train_no TEXT');
+  }
+  if (!alertCols.includes('cancel_origin')) {
+    _db.exec('ALTER TABLE alert_posts ADD COLUMN cancel_origin TEXT');
+  }
   // Seed alert_versions with the current state of every alert_posts row that
   // has no version history yet. Runs once at startup after the table is
   // created (or after an existing DB picks up the new table on this deploy).
@@ -674,6 +702,44 @@ function recordAlertResolved({ alertId, replyUri }, now = Date.now()) {
       WHERE alert_id = ?
     `)
     .run(now, replyUri || null, alertId);
+}
+
+// Record (or refresh) the schedule-anchored facts of a single-train cancellation
+// and initialize its state to 'upcoming'. Idempotent: the window fields are
+// COALESCE'd (set once, from the schedule), and the state is only initialized when
+// unset — it never downgrades a row finalizeCancellation has already moved to
+// 'cancelled'. The bin calls this every tick for a not-yet-finalized cancellation.
+function recordCancellation({ alertId, depTs, arrTs, trainNo, origin }) {
+  db()
+    .prepare(`
+      UPDATE alert_posts
+      SET cancel_dep_ts = COALESCE(cancel_dep_ts, ?),
+          cancel_arr_ts = COALESCE(cancel_arr_ts, ?),
+          cancel_train_no = COALESCE(cancel_train_no, ?),
+          cancel_origin = COALESCE(cancel_origin, ?),
+          cancel_state = CASE WHEN cancel_state IS NULL THEN 'upcoming' ELSE cancel_state END
+      WHERE alert_id = ?
+    `)
+    .run(depTs ?? null, arrTs ?? null, trainNo ?? null, origin ?? null, alertId);
+}
+
+// Finalize a single-train cancellation once its scheduled departure has passed:
+// flip the label to 'cancelled' and stamp resolved_ts so it leaves the unresolved
+// set (and the feed-drop "resolved" sweep). resolved_ts is the honest "this train's
+// slot passed" moment — the scheduled departure, but never before we first saw the
+// alert (an annulment announced after departure is dated to when we learned of it,
+// keeping resolved_ts >= first_seen_ts). The neutral close-note reply uri is stored
+// in resolved_reply_uri (null when the post failed), mirroring recordAlertResolved.
+function finalizeCancellation({ alertId, replyUri }) {
+  db()
+    .prepare(`
+      UPDATE alert_posts
+      SET cancel_state = 'cancelled',
+          resolved_ts = COALESCE(resolved_ts, MAX(cancel_dep_ts, first_seen_ts)),
+          resolved_reply_uri = COALESCE(resolved_reply_uri, ?)
+      WHERE alert_id = ?
+    `)
+    .run(replyUri || null, alertId);
 }
 
 function incrementAlertClearTicks(alertId, now = Date.now()) {
@@ -1760,6 +1826,8 @@ module.exports = {
   getAlertPost,
   recordAlertSeen,
   recordAlertResolved,
+  recordCancellation,
+  finalizeCancellation,
   incrementAlertClearTicks,
   resetAlertClearTicks,
   listUnresolvedAlerts,

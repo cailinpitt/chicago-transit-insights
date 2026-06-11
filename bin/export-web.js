@@ -126,6 +126,7 @@ function ctaBlock(alert) {
     cta_event_end_ts: alert.cta_event_end_ts ?? null,
     cta_event_start_is_date_only: alert.cta_event_start_is_date_only ?? false,
     cta_event_end_is_date_only: alert.cta_event_end_is_date_only ?? false,
+    cancellation: alert.cancellation ?? null,
   };
   // versions is present on the built alert only when CTA edited it (>1 version).
   if (alert.versions && alert.versions.length > 1) block.versions = alert.versions;
@@ -271,7 +272,8 @@ function main() {
         affected_from_station, affected_to_station, affected_direction,
         mentioned_stations,
         cta_event_start_ts, cta_event_end_ts,
-        cta_event_start_is_date_only, cta_event_end_is_date_only
+        cta_event_start_is_date_only, cta_event_end_is_date_only,
+        cancel_state, cancel_dep_ts, cancel_arr_ts, cancel_train_no, cancel_origin
        FROM alert_posts
        ORDER BY first_seen_ts DESC`,
     )
@@ -460,6 +462,21 @@ function main() {
     // UI can render "Sun May 25" without an artificial 11:59 PM.
     cta_event_start_is_date_only: row.cta_event_start_is_date_only === 1,
     cta_event_end_is_date_only: row.cta_event_end_is_date_only === 1,
+    // Schedule-anchored single-train Metra cancellation. Present (non-null) only
+    // when the alert annuls exactly one scheduled train. `state` is the rider-
+    // facing label ('upcoming' before the scheduled departure, 'cancelled' after);
+    // the departure/arrival are that train's timetable, and the frontend renders
+    // the window + state directly (no client-side clock math). Null for every
+    // open-ended notice, which keeps the ongoing→resolved model via resolved_ts.
+    cancellation: row.cancel_state
+      ? {
+          state: row.cancel_state,
+          scheduled_departure_ts: row.cancel_dep_ts ?? null,
+          scheduled_arrival_ts: row.cancel_arr_ts ?? null,
+          train_number: row.cancel_train_no ?? null,
+          origin: row.cancel_origin ?? null,
+        }
+      : null,
     // Successive edits CTA made to the alert text (headline / body /
     // affected scope). Only included when >1 version exists — a fresh
     // alert that CTA never edited is fully described by the top-level

@@ -146,6 +146,15 @@ function buildMetraResolutionText(header) {
   return `${MODE_EMOJI}✅ Metra reports this is resolved:\n\n${head}`;
 }
 
+// Threaded reply that closes a single-train cancellation once its scheduled
+// departure has passed. Deliberately NOT the "resolved" reply: a cancelled train
+// doesn't un-cancel, so we never imply service was restored — just a neutral note
+// that the train's slot has elapsed. Plain text (no link card / "Archived" OG
+// variant), threaded under the original annulment post which carries the context.
+function buildMetraCancellationCloseText() {
+  return "ℹ️ This train's scheduled departure time has passed.";
+}
+
 // Clean link-card headline for the resolution reply — no leading emoji, points
 // at the incident's archive page on chicagotransitalerts.app. Mirrors CTA's
 // buildResolutionReplyCardTitle so both accounts read consistently.
@@ -160,6 +169,7 @@ module.exports = {
   buildMetraAlertText,
   buildMetraResolutionText,
   buildMetraResolutionCardTitle,
+  buildMetraCancellationCloseText,
   MAJOR_PATTERNS,
   MINOR_PATTERNS,
 };
