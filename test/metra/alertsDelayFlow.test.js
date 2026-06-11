@@ -143,6 +143,17 @@ test('qualified delay posts with a schedule-anchored deadline; resolves with a n
     assert.equal(r2.resolved_ts, DEADLINE, 'resolved at the deadline, not "now"');
     assert.equal(r2.resolved_reply_uri, closeNotes[0].uri);
     assert.equal(r2.clear_ticks, 0, 'never went through the feed-drop tick path');
+
+    // Metra may keep the same delay alert on the wire after our schedule-based
+    // terminal close. A later sighting must not reopen the row and post another
+    // close-note every cron tick.
+    await bin.main({ now: T_1430 + 2 * 60_000 });
+    assert.equal(
+      posts.filter((p) => p.replyRef != null).length,
+      1,
+      'no duplicate close-note after the schedule-terminal resolution',
+    );
+    assert.equal(history.getAlertPost('a31').resolved_ts, DEADLINE, 'stays resolved');
   } finally {
     cleanup();
   }

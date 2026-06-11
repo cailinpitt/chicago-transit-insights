@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { buildIncidents, postUrlRkey } = require('../bin/export-web');
+const { buildIncidents, metraTrainNumberFromTripId, postUrlRkey } = require('../bin/export-web');
 
 const NOW = 1_700_000_000_000;
 const url = (rkey) => `https://bsky.app/profile/did:plc:abc/post/${rkey}`;
@@ -57,6 +57,12 @@ test('postUrlRkey extracts the rkey, null on missing/malformed', () => {
   assert.equal(postUrlRkey(url('abc123')), 'abc123');
   assert.equal(postUrlRkey(null), null);
   assert.equal(postUrlRkey('https://bsky.app/profile/x'), null);
+});
+
+test('metraTrainNumberFromTripId extracts the run number from static trip ids', () => {
+  assert.equal(metraTrainNumberFromTripId('RI_RI428_V7_B'), '428');
+  assert.equal(metraTrainNumberFromTripId('UP-W_UW31_V1_B'), '31');
+  assert.equal(metraTrainNumberFromTripId(null), null);
 });
 
 test('pairs a CTA alert with a matching bot observation into one incident', () => {

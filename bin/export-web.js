@@ -54,6 +54,17 @@ function postUrlRkey(postUrl) {
   return m ? m[1] : null;
 }
 
+// The run number embedded in a Metra static trip_id: `RI_RI428_V7_B` → "428".
+// Export only this compact identity for point observations so the web title can
+// say when one incident spans several trains without shipping the full evidence.
+function metraTrainNumberFromTripId(tripId) {
+  if (tripId == null) return null;
+  const parts = String(tripId).split('_');
+  if (parts.length < 2) return null;
+  const digits = parts[1].replace(/\D/g, '');
+  return digits || null;
+}
+
 // Parse L train line names out of CTA alert text. CTA edits a live alert as
 // the situation evolves and may drop lines from the headline once their
 // service recovers (e.g. "Brown, Red and Purple Line Service Delayed" →
@@ -631,6 +642,7 @@ function main() {
       direction: row.direction ?? null,
       from_station: row.from_station ?? null,
       to_station: row.to_station ?? null,
+      train_number: metraTrainNumberFromTripId(ev.tripId),
       detection_source: source,
       signals: null,
       // No `evidence` here: the frontend's formatEvidenceChip has no branch for
@@ -709,4 +721,4 @@ if (require.main === module) {
   main();
 }
 
-module.exports = { buildIncidents, ctaBlock, postUrlRkey };
+module.exports = { buildIncidents, ctaBlock, metraTrainNumberFromTripId, postUrlRkey };

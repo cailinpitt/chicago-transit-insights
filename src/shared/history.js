@@ -613,6 +613,12 @@ function recordAlertSeen(
   }
   if (existing) {
     const wasResolved = existing.resolved_ts != null;
+    const scheduleTerminalResolved =
+      wasResolved &&
+      ((existing.cancel_dep_ts != null &&
+        existing.resolved_ts >= Math.max(existing.cancel_dep_ts, existing.first_seen_ts)) ||
+        (existing.delay_deadline_ts != null &&
+          existing.resolved_ts >= Math.max(existing.delay_deadline_ts, existing.first_seen_ts)));
     // A genuinely new chapter under the same alert id: the post finally landed
     // after a premature resolution sweep wiped resolved_ts before any post
     // existed, or CTA re-published the same id after a long enough gap to count
@@ -621,6 +627,7 @@ function recordAlertSeen(
     // the timeline shows the gap even if the text is unchanged.
     const newChapter =
       wasResolved &&
+      !scheduleTerminalResolved &&
       ((postUri && !existing.post_uri) || now - existing.last_seen_ts > ALERT_FLICKER_RESET_MS);
     // A short flicker: CTA dropped the alert long enough for us to resolve it
     // (≥ ALERT_CLEAR_TICKS absent) but re-listed it within the flicker window.
@@ -630,7 +637,7 @@ function recordAlertSeen(
     // reply when it re-resolves. Without this, an alert that flickers out for
     // 6–30 min stays frozen at the premature resolved_ts while versions and
     // last_seen_ts keep advancing (duration < time of the last version).
-    const flickerReopen = wasResolved && !newChapter;
+    const flickerReopen = wasResolved && !newChapter && !scheduleTerminalResolved;
     // SQL fragment that clears the resolution columns for this sighting. No
     // bound params — the values are constant — so it embeds directly.
     const resolutionReset = newChapter
