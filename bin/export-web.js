@@ -143,6 +143,26 @@ function ctaBlock(alert) {
   return block;
 }
 
+function metraStatusBlock(alert) {
+  if (alert.kind !== 'metra') return null;
+  if (alert.cancellation?.state) {
+    return {
+      source: 'cancellation',
+      state: alert.cancellation.state,
+      train_number: alert.cancellation.train_number ?? null,
+    };
+  }
+  if (alert.delay_deadline_ts != null) {
+    return {
+      source: 'delay',
+      deadline_ts: alert.delay_deadline_ts,
+      delay_min: alert.delay_min ?? null,
+      train_number: alert.delay_train_no ?? null,
+    };
+  }
+  return null;
+}
+
 // Combine official CTA alerts and bot observations into one incident per
 // underlying disruption. This is the merge that used to run client-side in
 // cta-alert-history's mergeMatchingIncidents — moved here so the published JSON
@@ -247,6 +267,7 @@ function buildIncidents(builtAlerts, builtObservations) {
       // metadata, and the `cta` block is a CTA-era misnomer for the official
       // alert that would misname it for Metra.
       cancellation: alert.cancellation ?? null,
+      metra_status: metraStatusBlock(alert),
       observations: matches,
     });
     for (const o of matches) usedObsIds.add(o.id);
@@ -288,7 +309,8 @@ function main() {
         mentioned_stations,
         cta_event_start_ts, cta_event_end_ts,
         cta_event_start_is_date_only, cta_event_end_is_date_only,
-        cancel_state, cancel_dep_ts, cancel_arr_ts, cancel_train_no, cancel_origin
+        cancel_state, cancel_dep_ts, cancel_arr_ts, cancel_train_no, cancel_origin,
+        delay_deadline_ts, delay_min, delay_train_no
        FROM alert_posts
        ORDER BY first_seen_ts DESC`,
     )
@@ -492,6 +514,9 @@ function main() {
           origin: row.cancel_origin ?? null,
         }
       : null,
+    delay_deadline_ts: row.delay_deadline_ts ?? null,
+    delay_min: row.delay_min ?? null,
+    delay_train_no: row.delay_train_no ?? null,
     // Successive edits CTA made to the alert text (headline / body /
     // affected scope). Only included when >1 version exists — a fresh
     // alert that CTA never edited is fully described by the top-level

@@ -85,6 +85,54 @@ test('CTA alert with no matching observation is a cta-only incident', () => {
   assert.ok(incidents[0].cta);
 });
 
+test('official Metra delay alerts export a Metra status block', () => {
+  const incidents = buildIncidents(
+    [
+      alert({
+        kind: 'metra',
+        routes: ['RI'],
+        headline: 'RID #426 Delayed',
+        delay_deadline_ts: NOW + 90 * 60_000,
+        delay_min: 35,
+        delay_train_no: '426',
+      }),
+    ],
+    [],
+  );
+  assert.deepEqual(incidents[0].routes, ['ri']);
+  assert.deepEqual(incidents[0].metra_status, {
+    source: 'delay',
+    deadline_ts: NOW + 90 * 60_000,
+    delay_min: 35,
+    train_number: '426',
+  });
+});
+
+test('official Metra cancellation alerts export cancellation status', () => {
+  const incidents = buildIncidents(
+    [
+      alert({
+        kind: 'metra',
+        routes: ['RI'],
+        headline: 'RID #424 Will Not Operate',
+        cancellation: {
+          state: 'cancelled',
+          scheduled_departure_ts: NOW,
+          scheduled_arrival_ts: NOW + 60 * 60_000,
+          train_number: '424',
+          origin: 'Joliet',
+        },
+      }),
+    ],
+    [],
+  );
+  assert.deepEqual(incidents[0].metra_status, {
+    source: 'cancellation',
+    state: 'cancelled',
+    train_number: '424',
+  });
+});
+
 test('observation with no matching alert is a bot-only incident', () => {
   const incidents = buildIncidents([], [obs()]);
   assert.equal(incidents.length, 1);
