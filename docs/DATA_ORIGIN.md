@@ -53,25 +53,41 @@ migration). Then:
    ]
    ```
 
-   **`AllowedOrigins` MUST be `["*"]`, not a specific-origin list.** This data is
-   public by design (see the README "Data as an API"), so `*` is correct — but
-   the load-bearing reason is caching. When R2 is given specific origins it
-   echoes the matching one back and adds **`Vary: Origin`** to the response.
-   Cloudflare refuses to edge-cache any response whose `Vary` contains anything
-   other than `Accept-Encoding`, so the file becomes uncacheable
-   (`cf-cache-status: DYNAMIC`) and **every** poll/visitor is proxied to the R2
-   origin. R2 origin TTFB spikes badly under load (observed 4–37s on 2026-06-10),
-   so with no edge cache those spikes hit real users. `["*"]` returns
-   `Access-Control-Allow-Origin: *` with no `Vary: Origin`, which lets Cloudflare
-   cache per the upload's `Cache-Control: max-age=30` — origin is then hit only on
-   the ~30s revalidation per edge node, and everyone else gets a fast edge HIT.
+   Use `["*"]` (the data is public — see the README "Data as an API"). A
+   specific-origin list also works for CORS, but `*` lets any consumer fetch it
+   cross-origin, which is the documented intent.
 
-   Verify after applying: `curl -sI -H 'Origin: https://chicagotransitalerts.app'
+### Edge caching (REQUIRED — do not skip)
+
+   **Without this, every poll and every visitor is proxied to the R2 origin, and
+   R2's TTFB spikes badly under load (observed 4–37s on 2026-06-10) hit real
+   users.** With it, origin is touched only on the ~30s revalidation per edge
+   colo and everyone else gets a fast edge HIT (~70ms TTFB).
+
+   The blocker is that **R2 always emits `Vary: Origin` on any CORS-matched
+   response — even with `AllowedOrigins: ["*"]`** (confirmed 2026-06-10; the
+   CORS policy alone does NOT remove it). Cloudflare refuses to cache any
+   response whose `Vary` is anything other than `Accept-Encoding`, so the file
+   sits at `cf-cache-status: DYNAMIC` until the header is stripped at the edge.
+   Two rules on the `chicagotransitalerts.app` zone fix it:
+
+   1. **Transform Rules → Modify Response Header → Create:** If _Hostname equals
+      `data.chicagotransitalerts.app`_ → **Remove** header `Vary`. (Runs before
+      the object is written to cache, so it makes the response cacheable. CORS
+      still works — `Access-Control-Allow-Origin: *` is origin-independent.)
+   2. **Caching → Cache Rules → Create:** If _Hostname equals
+      `data.chicagotransitalerts.app`_ → Cache eligibility **Eligible for cache**;
+      Edge TTL **"Use cache-control header if present"** (respects the upload's
+      `max-age=30`). Optionally set Browser TTL **"Respect origin"** too —
+      otherwise Cloudflare rewrites the client-facing `Cache-Control` to the zone
+      default Browser Cache TTL (4h); harmless to the SPA (it fetches `no-cache`)
+      but stale for direct API consumers.
+
+   Verify: `curl -sI -H 'Origin: https://chicagotransitalerts.app'
    https://data.chicagotransitalerts.app/alerts.json | grep -i 'cf-cache-status\|vary'`
-   — expect no `Vary: Origin`, and `cf-cache-status` flips to `HIT`/`MISS` (not
-   `DYNAMIC`) on the second request. If it stays `DYNAMIC`, add a Cloudflare
-   **Cache Rule** (Caching → Cache Rules): match hostname
-   `data.chicagotransitalerts.app` → *Eligible for cache* → *Respect origin TTL*.
+   — expect **no** `Vary: Origin`, and `cf-cache-status` flips `MISS` → `HIT`
+   (with a climbing `age:`, resetting to `REVALIDATED` every ~30s) on repeat
+   requests.
 
 ### R2 write credentials (server)
 
