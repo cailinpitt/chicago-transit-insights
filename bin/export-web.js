@@ -612,7 +612,12 @@ function main() {
       to_station: row.to_station ?? null,
       detection_source: source,
       signals: null,
-      evidence: ev,
+      // No `evidence` here: the frontend's formatEvidenceChip has no branch for
+      // the Metra cancellation/delay evidence shape (tripId/serviceDate/headsign/
+      // …), so it was shipped to every client but never rendered. The rider-
+      // facing bits are already baked into `bot_description` and `onset_ts`
+      // above, so dropping it is lossless for consumers (~35KB/payload on a
+      // heavy-cancellation day). `ev` is still used locally just above.
       ts: row.ts,
       // Back-date to the scheduled departure so the timeline reflects when the
       // train was due, not when the hourly rollup noticed.
@@ -667,7 +672,12 @@ function main() {
       console.error('export-web: no data changes, skipping write');
       return;
     }
-    Fs.writeFileSync(outputPath, JSON.stringify(out, null, 2) + '\n', 'utf8');
+    // Minified, not pretty-printed: this file is the R2 payload every client
+    // downloads + parses on load (and re-fetches no-store every 5 min). Since
+    // the R2 migration it's no longer committed to git, so the human-readable
+    // indentation served nobody and just inflated the payload (~360KB / ~30% was
+    // whitespace) and parse time. Stdout below stays pretty for manual/debug use.
+    Fs.writeFileSync(outputPath, `${JSON.stringify(out)}\n`, 'utf8');
     console.error(`export-web: wrote ${out.incidents.length} incidents to ${outputPath}`);
   } else {
     process.stdout.write(JSON.stringify(out, null, 2) + '\n');
