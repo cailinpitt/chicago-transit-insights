@@ -102,7 +102,7 @@ echo '{"kind":"train","line":"red","detection_source":"roundup","signals":["gap"
 Input is one observation row shaped like what `bin/export-web.js` feeds the
 renderers: `{ kind, line, detection_source, signals, bullets, evidence,
 from_station, to_station, ts, onset_ts }`. To see the real shape for a live
-event, pull it from the wire: `curl -s https://chicagotransitalerts.app/data/alerts.json`.
+event, pull it from the wire: `curl -s https://data.chicagotransitalerts.app/alerts.json`.
 
 ---
 
