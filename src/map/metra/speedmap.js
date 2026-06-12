@@ -6,15 +6,18 @@ const {
   WIDTH,
   HEIGHT,
   ROUTE_HALO_COLOR,
-  SPEEDMAP_SEGMENT_STROKE,
   SPEEDMAP_HALO_STROKE,
   sliceIntoSegments,
   requireMapboxToken,
   fetchMapboxStatic,
 } = require('../common');
 
-// Perpendicular offset per direction ribbon — same as the CTA train speedmap.
-const DUAL_DIR_OFFSET_FT = 250;
+// Perpendicular offset per direction ribbon. Metra maps cover 35-60 mile
+// corridors, so the CTA train offset collapses to a couple pixels and the later
+// direction hides the earlier one. Keep the ribbons separated by about their
+// full stroke width at commuter-rail zoom.
+const DUAL_DIR_OFFSET_FT = 750;
+const METRA_SPEEDMAP_SEGMENT_STROKE = 7;
 
 // Metra color ramp: the same five buckets as the L speedmap, shifted up to
 // commuter-rail speeds (matches METRA_THRESHOLDS in src/metra/speedmap.js). Red =
@@ -44,6 +47,11 @@ function speedForRender(binSpeeds, idx) {
   return null;
 }
 
+function directionOffsetFt(dirCount, index) {
+  if (dirCount <= 1) return 0;
+  return index === 0 ? DUAL_DIR_OFFSET_FT : -DUAL_DIR_OFFSET_FT;
+}
+
 // Render a Metra line speedmap. `branches` is `[{ points, cumDist,
 // binSpeedsByDir }]` — same contract as renderTrainSpeedmap, so the geometry +
 // binning pipeline is fully shared; only the color ramp differs.
@@ -55,13 +63,9 @@ async function renderMetraSpeedmap(branches) {
       `path-${SPEEDMAP_HALO_STROKE}+${ROUTE_HALO_COLOR}(${encodeURIComponent(encode(points))})`,
     );
     const dirs = Object.keys(binSpeedsByDir);
-    const offsetFor = (i) => {
-      if (dirs.length === 1) return 0;
-      return i === 0 ? DUAL_DIR_OFFSET_FT : -DUAL_DIR_OFFSET_FT;
-    };
     dirs.forEach((dir, i) => {
       const binSpeeds = binSpeedsByDir[dir];
-      const offsetFt = offsetFor(i);
+      const offsetFt = directionOffsetFt(dirs.length, i);
       const ribbonPairs = offsetFt === 0 ? points : offsetPolyline(points, offsetFt);
       const ribbonObjs = ribbonPairs.map(([lat, lon]) => ({ lat, lon }));
       const slices = sliceIntoSegments(ribbonObjs, cumDist, binSpeeds.length);
@@ -70,7 +74,7 @@ async function renderMetraSpeedmap(branches) {
         const pairSlice = slices[b].map((p) => [p.lat, p.lon]);
         const encoded = encodeURIComponent(encode(pairSlice));
         const color = colorForMetraSpeed(speedForRender(binSpeeds, b));
-        overlays.push(`path-${SPEEDMAP_SEGMENT_STROKE}+${color}(${encoded})`);
+        overlays.push(`path-${METRA_SPEEDMAP_SEGMENT_STROKE}+${color}(${encoded})`);
       }
     });
   }
@@ -80,4 +84,10 @@ async function renderMetraSpeedmap(branches) {
   return sharp(data).jpeg({ quality: 85 }).toBuffer();
 }
 
-module.exports = { renderMetraSpeedmap, colorForMetraSpeed };
+module.exports = {
+  renderMetraSpeedmap,
+  colorForMetraSpeed,
+  directionOffsetFt,
+  DUAL_DIR_OFFSET_FT,
+  METRA_SPEEDMAP_SEGMENT_STROKE,
+};

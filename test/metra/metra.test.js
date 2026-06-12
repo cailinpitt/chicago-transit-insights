@@ -23,6 +23,11 @@ const {
   computeMetraSamples,
   directionLabel,
 } = require('../../src/metra/speedmap');
+const {
+  directionOffsetFt,
+  DUAL_DIR_OFFSET_FT,
+  METRA_SPEEDMAP_SEGMENT_STROKE,
+} = require('../../src/map/metra/speedmap');
 const { detectCancellations, isFeedHealthy } = require('../../src/metra/cancellations');
 const { activeServiceIds, scheduledDeparturesInWindow } = require('../../src/metra/schedule');
 const {
@@ -384,6 +389,16 @@ test('directionLabel maps GTFS direction_id to rider labels', () => {
   assert.strictEqual(directionLabel('1'), 'Inbound');
   assert.strictEqual(directionLabel('0'), 'Outbound');
   assert.strictEqual(directionLabel('unknown'), 'Unknown direction');
+});
+
+test('Metra speedmap offsets opposite directions enough to avoid visual cover-up', () => {
+  assert.strictEqual(directionOffsetFt(1, 0), 0);
+  assert.strictEqual(directionOffsetFt(2, 0), DUAL_DIR_OFFSET_FT);
+  assert.strictEqual(directionOffsetFt(2, 1), -DUAL_DIR_OFFSET_FT);
+  // At the long Metra corridor zooms, 250 ft per side was only a few pixels and
+  // one direction sat on top of the other. Require a full-ribbon-scale split.
+  assert.ok(DUAL_DIR_OFFSET_FT >= 700);
+  assert.ok(METRA_SPEEDMAP_SEGMENT_STROKE <= 7);
 });
 
 // --- cancellation detector ---
