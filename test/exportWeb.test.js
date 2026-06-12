@@ -150,6 +150,25 @@ test('official Metra delay text classifies the bare word "delay" (no minutes phr
   });
 });
 
+test('official Metra planned-work delay alerts export planned-delay status', () => {
+  const incidents = buildIncidents(
+    [
+      alert({
+        kind: 'metra',
+        routes: ['MD-W'],
+        headline: 'Track Construction Saturday, June 13 through Sunday, June 14',
+        short_description:
+          'Track construction will be taking place on Saturday, June 13 through Sunday, June 14. Trains may incur delays enroute up to 20 minutes behind scheduled passing through the work zone.',
+      }),
+    ],
+    [],
+  );
+  assert.deepEqual(incidents[0].metra_status, {
+    source: 'planned-delay',
+    train_number: null,
+  });
+});
+
 test('official Metra cancellation alerts export cancellation status', () => {
   const incidents = buildIncidents(
     [

@@ -77,6 +77,11 @@ function officialMetraStatusFromText(alert) {
       text,
     )
   ) {
+    if (
+      /\b(track\s+construction|construction|planned\s+work|work\s+zone|maintenance)\b/i.test(text)
+    ) {
+      return 'planned-delay';
+    }
     return 'delay';
   }
   return null;
