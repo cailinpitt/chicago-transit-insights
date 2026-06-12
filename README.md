@@ -2,10 +2,10 @@
 
 Bluesky bots that turn CTA train and bus tracker data into Chicago-specific transit visualizations.
 
-- **Bus**: [@ctabusinsights.bsky.social](https://bsky.app/profile/ctabusinsights.bsky.social)
-- **Train**: [@ctatraininsights.bsky.social](https://bsky.app/profile/ctatraininsights.bsky.social)
-- **Alerts**: [@ctaalertinsights.bsky.social](https://bsky.app/profile/ctaalertinsights.bsky.social)
-- **Metra**: [@metrainsights.bsky.social](https://bsky.app/profile/metrainsights.bsky.social) (analytics) · [@metraalertinsights.bsky.social](https://bsky.app/profile/metraalertinsights.bsky.social) (disruptions/alerts)
+- **Bus**: [@ctabusinsights.chicagotransitalerts.app](https://bsky.app/profile/ctabusinsights.chicagotransitalerts.app)
+- **Train**: [@ctatraininsights.chicagotransitalerts.app](https://bsky.app/profile/ctatraininsights.chicagotransitalerts.app)
+- **Alerts**: [@ctaalertinsights.chicagotransitalerts.app](https://bsky.app/profile/ctaalertinsights.chicagotransitalerts.app)
+- **Metra**: [@metrainsights.bsky.chicagotransitalerts.app](https://bsky.app/profile/metrainsights.chicagotransitalerts.appl) (analytics) · [@metraalertinsights.chicagotransitalerts.app](https://bsky.app/profile/metraalertinsights.chicagotransitalerts.app) (disruptions/alerts)
 
 This README is written for operators running their own copy. If you just want to see the output, follow the accounts above. Scroll to the [Examples gallery](#examples-gallery) for sample posts.
 
