@@ -71,18 +71,20 @@ test('pairs a CTA alert with a matching bot observation into one incident', () =
   const inc = incidents[0];
   assert.deepEqual(inc.sources, ['cta', 'bot']);
   assert.equal(inc.id, 'alertrkey'); // alert rkey preferred
-  assert.ok(inc.cta);
-  assert.equal(inc.cta.alert_id, 'alert-1');
-  assert.equal(inc.observations.length, 1);
-  assert.equal(inc.observations[0].from_station, 'Howard');
+  assert.equal(inc.agency, 'cta');
+  assert.equal(inc.mode, 'train');
+  assert.ok(inc.official_alert);
+  assert.equal(inc.official_alert.id, 'alert-1');
+  assert.equal(inc.detections.length, 1);
+  assert.equal(inc.detections[0].scope.from_station, 'Howard');
 });
 
 test('CTA alert with no matching observation is a cta-only incident', () => {
   const incidents = buildIncidents([alert()], []);
   assert.equal(incidents.length, 1);
   assert.deepEqual(incidents[0].sources, ['cta']);
-  assert.equal(incidents[0].observations.length, 0);
-  assert.ok(incidents[0].cta);
+  assert.equal(incidents[0].detections.length, 0);
+  assert.ok(incidents[0].official_alert);
 });
 
 test('official Metra delay alerts export a Metra status block', () => {
@@ -100,8 +102,8 @@ test('official Metra delay alerts export a Metra status block', () => {
     [],
   );
   assert.deepEqual(incidents[0].routes, ['ri']);
-  assert.deepEqual(incidents[0].metra_status, {
-    source: 'delay',
+  assert.deepEqual(incidents[0].status, {
+    type: 'delay',
     deadline_ts: NOW + 90 * 60_000,
     delay_min: 35,
     train_number: '426',
@@ -121,8 +123,8 @@ test('official Metra delay alerts fall back to text classification when not sche
     ],
     [],
   );
-  assert.deepEqual(incidents[0].metra_status, {
-    source: 'delay',
+  assert.deepEqual(incidents[0].status, {
+    type: 'delay',
     train_number: '426',
   });
 });
@@ -144,8 +146,8 @@ test('official Metra delay text classifies the bare word "delay" (no minutes phr
     ],
     [],
   );
-  assert.deepEqual(incidents[0].metra_status, {
-    source: 'delay',
+  assert.deepEqual(incidents[0].status, {
+    type: 'delay',
     train_number: '366',
   });
 });
@@ -163,8 +165,8 @@ test('official Metra planned-work delay alerts export planned-delay status', () 
     ],
     [],
   );
-  assert.deepEqual(incidents[0].metra_status, {
-    source: 'planned-delay',
+  assert.deepEqual(incidents[0].status, {
+    type: 'planned-delay',
     train_number: null,
   });
 });
@@ -187,10 +189,13 @@ test('official Metra cancellation alerts export cancellation status', () => {
     ],
     [],
   );
-  assert.deepEqual(incidents[0].metra_status, {
-    source: 'cancellation',
+  assert.deepEqual(incidents[0].status, {
+    type: 'cancellation',
     state: 'cancelled',
+    scheduled_departure_ts: NOW,
+    scheduled_arrival_ts: NOW + 60 * 60_000,
     train_number: '424',
+    origin: 'Joliet',
   });
 });
 
@@ -198,7 +203,7 @@ test('observation with no matching alert is a bot-only incident', () => {
   const incidents = buildIncidents([], [obs()]);
   assert.equal(incidents.length, 1);
   assert.deepEqual(incidents[0].sources, ['bot']);
-  assert.equal(incidents[0].cta, null);
+  assert.equal(incidents[0].official_alert, null);
   assert.equal(incidents[0].id, 'obsrkey'); // obs rkey
   assert.deepEqual(incidents[0].routes, ['red']);
 });
@@ -211,13 +216,13 @@ test('buildIncidents preserves affected_stations (cta) and stations (obs)', () =
   });
   const o = obs({ ts: NOW + 5 * 60_000, stations: ['Howard', 'Jarvis', 'Loyola'] });
   const inc = buildIncidents([a], [o])[0];
-  assert.deepEqual(inc.cta.affected_stations, ['Belmont', 'Addison', 'Wilson', 'Howard']);
-  assert.deepEqual(inc.observations[0].stations, ['Howard', 'Jarvis', 'Loyola']);
+  assert.deepEqual(inc.official_alert.scope.stations, ['Belmont', 'Addison', 'Wilson', 'Howard']);
+  assert.deepEqual(inc.detections[0].scope.stations, ['Howard', 'Jarvis', 'Loyola']);
 });
 
-test('cta block defaults affected_stations to [] when absent', () => {
+test('official alert scope defaults stations to [] when absent', () => {
   const inc = buildIncidents([alert()], [])[0];
-  assert.deepEqual(inc.cta.affected_stations, []);
+  assert.deepEqual(inc.official_alert.scope.stations, []);
 });
 
 test('normalizes train line short codes to full names on both sides', () => {
@@ -227,7 +232,7 @@ test('normalizes train line short codes to full names on both sides', () => {
   );
   assert.equal(incidents.length, 1, 'should still pair after normalization');
   assert.deepEqual(incidents[0].routes, ['green']);
-  assert.equal(incidents[0].observations[0].line, 'green');
+  assert.equal(incidents[0].detections[0].scope.route, 'green');
 });
 
 test('does not merge across different routes', () => {
@@ -251,15 +256,15 @@ test('multiple matching observations ride along, primary (closest) first', () =>
   const far = obs({ id: 2, ts: NOW + 90 * 60_000, post_url: url('far') });
   const incidents = buildIncidents([alert()], [far, near]);
   assert.equal(incidents.length, 1);
-  assert.equal(incidents[0].observations.length, 2);
-  assert.equal(incidents[0].observations[0].id, 1, 'closest obs is primary');
+  assert.equal(incidents[0].detections.length, 2);
+  assert.equal(incidents[0].detections[0].id, 1, 'closest obs is primary');
 });
 
 test('active incident reports no resolution even if a paired obs resolved', () => {
   const resolvedObs = obs({ resolved_ts: NOW + 10 * 60_000, active: false });
   const incidents = buildIncidents([alert({ active: true, resolved_ts: null })], [resolvedObs]);
-  assert.equal(incidents[0].active, true);
-  assert.equal(incidents[0].resolved_ts, null);
+  assert.equal(incidents[0].lifecycle.active, true);
+  assert.equal(incidents[0].lifecycle.resolved_ts, null);
 });
 
 test('merged incident first_seen_ts is the earliest of CTA and bot onset', () => {
@@ -274,14 +279,22 @@ test('merged incident first_seen_ts is the earliest of CTA and bot onset', () =>
   const incidents = buildIncidents([alert({ first_seen_ts: NOW })], [earlyObs]);
   assert.equal(incidents.length, 1);
   const inc = incidents[0];
-  assert.equal(inc.first_seen_ts, NOW - 30 * 60_000, 'uses earliest onset across sources');
-  assert.equal(inc.cta.first_seen_ts, NOW, 'CTA block keeps its own post time');
+  assert.equal(
+    inc.lifecycle.first_seen_ts,
+    NOW - 30 * 60_000,
+    'uses earliest onset across sources',
+  );
+  assert.equal(
+    inc.official_alert.lifecycle.first_seen_ts,
+    NOW,
+    'official block keeps its own post time',
+  );
 });
 
 test('merged first_seen_ts falls back to obs.ts when onset_ts is null', () => {
   const o = obs({ id: 1, ts: NOW - 10 * 60_000, onset_ts: null });
   const incidents = buildIncidents([alert({ first_seen_ts: NOW })], [o]);
-  assert.equal(incidents[0].first_seen_ts, NOW - 10 * 60_000);
+  assert.equal(incidents[0].lifecycle.first_seen_ts, NOW - 10 * 60_000);
 });
 
 test('routes union across versions preserves lines CTA dropped before resolving', () => {
@@ -324,7 +337,7 @@ test('bus incidents keep alert.routes as-is (no train-line text mining)', () => 
 test('merged first_seen_ts stays on CTA when CTA fired first', () => {
   const o = obs({ id: 1, ts: NOW + 5 * 60_000, onset_ts: NOW + 3 * 60_000 });
   const incidents = buildIncidents([alert({ first_seen_ts: NOW })], [o]);
-  assert.equal(incidents[0].first_seen_ts, NOW);
+  assert.equal(incidents[0].lifecycle.first_seen_ts, NOW);
 });
 
 test('resolved incident takes alert resolved_ts; incidents sort newest-first', () => {
@@ -341,6 +354,6 @@ test('resolved incident takes alert resolved_ts; incidents sort newest-first', (
     post_url: url('new'),
   });
   const incidents = buildIncidents([older, newer], []);
-  assert.equal(incidents[0].cta.alert_id, 'a-new', 'newest first');
-  assert.equal(incidents[0].resolved_ts, NOW + 30 * 60_000);
+  assert.equal(incidents[0].official_alert.id, 'a-new', 'newest first');
+  assert.equal(incidents[0].lifecycle.resolved_ts, NOW + 30 * 60_000);
 });

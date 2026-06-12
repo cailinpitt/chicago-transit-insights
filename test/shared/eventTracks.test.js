@@ -47,6 +47,46 @@ test('pickReplayableIncident pulls fields from the primary observation', () => {
   assert.equal(r.active, false);
 });
 
+test('pickReplayableIncident reads v2 detections and official_alert fields', () => {
+  const r = pickReplayableIncident({
+    id: 'v2',
+    agency: 'cta',
+    mode: 'train',
+    routes: ['red'],
+    lifecycle: { first_seen_ts: NOW, resolved_ts: NOW + 1800_000, active: false },
+    official_alert: {
+      id: 'alert',
+      lifecycle: { first_seen_ts: NOW, resolved_ts: NOW + 1800_000, active: false },
+      scope: {
+        from_station: 'Belmont',
+        to_station: 'Howard',
+        direction: 'toward Howard',
+        stations: ['Belmont', 'Howard'],
+      },
+    },
+    detections: [
+      {
+        id: 1,
+        source: 'pulse-cold',
+        scope: {
+          route: 'red',
+          from_station: 'Belmont',
+          to_station: 'Wilson',
+          direction_label: 'toward Howard',
+          stations: ['Belmont', 'Addison', 'Wilson'],
+        },
+        lifecycle: { first_seen_ts: NOW, onset_ts: NOW - 300_000, resolved_ts: null, active: true },
+      },
+    ],
+  });
+  assert.equal(r.eventId, 'v2');
+  assert.equal(r.lineShort, 'red');
+  assert.equal(r.from, 'Belmont');
+  assert.equal(r.to, 'Wilson');
+  assert.deepEqual(r.stations, ['Belmont', 'Addison', 'Wilson']);
+  assert.equal(r.onset, NOW - 300_000);
+});
+
 test('pickReplayableIncident rejects buses and segment-less incidents', () => {
   assert.equal(pickReplayableIncident(incident({ kind: 'bus' })), null);
   assert.equal(

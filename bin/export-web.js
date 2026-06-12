@@ -147,45 +147,81 @@ function affectedStationsForAlert(row) {
 // from the incident-level fields so a consumer can still compute the
 // service-stabilization delta between CTA marking the alert cleared and the
 // bot observing actual recovery.
-function ctaBlock(alert) {
+function lifecycleBlock({ firstSeenTs, resolvedTs, active, durationMs, onsetTs }) {
+  return {
+    first_seen_ts: firstSeenTs,
+    ...(onsetTs != null ? { onset_ts: onsetTs } : {}),
+    resolved_ts: resolvedTs ?? null,
+    active,
+    duration_ms:
+      durationMs ?? (resolvedTs != null && firstSeenTs != null ? resolvedTs - firstSeenTs : null),
+  };
+}
+
+function agencyForKind(kind) {
+  return kind === 'metra' ? 'metra' : 'cta';
+}
+
+function modeForKind(kind) {
+  if (kind === 'metra') return 'commuter_rail';
+  return kind;
+}
+
+function alertScope(alert) {
+  return {
+    from_station: alert.affected_from_station ?? null,
+    to_station: alert.affected_to_station ?? null,
+    stations: alert.affected_stations ?? [],
+    direction: alert.affected_direction ?? null,
+    mentioned_stations: alert.mentioned_stations ?? [],
+  };
+}
+
+function agencyEventWindow(alert) {
+  return {
+    start_ts: alert.cta_event_start_ts ?? null,
+    end_ts: alert.cta_event_end_ts ?? null,
+    start_is_date_only: alert.cta_event_start_is_date_only ?? false,
+    end_is_date_only: alert.cta_event_end_is_date_only ?? false,
+  };
+}
+
+function officialAlertBlock(alert) {
   const block = {
-    alert_id: alert.alert_id,
+    id: alert.alert_id,
     headline: alert.headline,
-    short_description: alert.short_description ?? null,
+    description: alert.short_description ?? null,
     post_url: alert.post_url,
     resolved_reply_url: alert.resolved_reply_url,
-    first_seen_ts: alert.first_seen_ts,
-    resolved_ts: alert.resolved_ts ?? null,
-    active: alert.active,
-    affected_from_station: alert.affected_from_station ?? null,
-    affected_to_station: alert.affected_to_station ?? null,
-    affected_direction: alert.affected_direction ?? null,
-    mentioned_stations: alert.mentioned_stations ?? [],
-    // Full station fill of the affected segment (endpoints + inner stops),
-    // computed upstream so each one can be tied to the incident downstream.
-    affected_stations: alert.affected_stations ?? [],
-    cta_event_start_ts: alert.cta_event_start_ts ?? null,
-    cta_event_end_ts: alert.cta_event_end_ts ?? null,
-    cta_event_start_is_date_only: alert.cta_event_start_is_date_only ?? false,
-    cta_event_end_is_date_only: alert.cta_event_end_is_date_only ?? false,
+    lifecycle: lifecycleBlock({
+      firstSeenTs: alert.first_seen_ts,
+      resolvedTs: alert.resolved_ts ?? null,
+      active: alert.active,
+      durationMs: alert.duration_ms ?? null,
+    }),
+    scope: alertScope(alert),
+    agency_event_window: agencyEventWindow(alert),
   };
   // versions is present on the built alert only when CTA edited it (>1 version).
   if (alert.versions && alert.versions.length > 1) block.versions = alert.versions;
   return block;
 }
 
-function metraStatusBlock(alert) {
+function statusBlock(alert) {
   if (alert.kind !== 'metra') return null;
   if (alert.cancellation?.state) {
     return {
-      source: 'cancellation',
+      type: 'cancellation',
       state: alert.cancellation.state,
       train_number: alert.cancellation.train_number ?? null,
+      scheduled_departure_ts: alert.cancellation.scheduled_departure_ts ?? null,
+      scheduled_arrival_ts: alert.cancellation.scheduled_arrival_ts ?? null,
+      origin: alert.cancellation.origin ?? null,
     };
   }
   if (alert.delay_deadline_ts != null) {
     return {
-      source: 'delay',
+      type: 'delay',
       deadline_ts: alert.delay_deadline_ts,
       delay_min: alert.delay_min ?? null,
       train_number: alert.delay_train_no ?? null,
@@ -194,8 +230,64 @@ function metraStatusBlock(alert) {
   const source = officialMetraStatusFromText(alert);
   if (source) {
     return {
-      source,
+      type: source,
       train_number: metraTrainNumberFromAlertText(alert),
+    };
+  }
+  return null;
+}
+
+function detectionScope(obs) {
+  return {
+    route: obs.line ?? null,
+    direction: obs.direction ?? null,
+    direction_label: obs.direction_label ?? null,
+    from_station: obs.from_station ?? null,
+    to_station: obs.to_station ?? null,
+    stations: obs.stations ?? [],
+  };
+}
+
+function detectionBlock(obs) {
+  return {
+    id: obs.id,
+    source: obs.detection_source,
+    scope: detectionScope(obs),
+    lifecycle: lifecycleBlock({
+      firstSeenTs: obs.ts,
+      onsetTs: obs.onset_ts ?? null,
+      resolvedTs: obs.resolved_ts ?? null,
+      active: obs.active,
+      durationMs: obs.duration_ms ?? null,
+    }),
+    post_url: obs.post_url ?? null,
+    resolved_post_url: obs.resolved_post_url ?? null,
+    description: obs.bot_description ?? null,
+    evidence: {
+      signals: obs.signals ?? null,
+      details: obs.evidence ?? null,
+      bullets: obs.bot_evidence_bullets ?? [],
+      onset_description: obs.onset_description ?? null,
+      train_number: obs.train_number ?? null,
+      resolved_description: obs.bot_resolved_description ?? null,
+    },
+  };
+}
+
+function statusFromDetection(obs) {
+  if (obs.kind !== 'metra') return null;
+  if (obs.detection_source === 'delay') {
+    return {
+      type: 'delay',
+      train_number: obs.train_number ?? null,
+      scheduled_departure_ts: obs.onset_ts ?? null,
+    };
+  }
+  if (obs.detection_source === 'cancellation' || obs.detection_source === 'cancellation-inferred') {
+    return {
+      type: obs.detection_source,
+      train_number: obs.train_number ?? null,
+      scheduled_departure_ts: obs.onset_ts ?? null,
     };
   }
   return null;
@@ -291,22 +383,20 @@ function buildIncidents(builtAlerts, builtObservations) {
     }
     incidents.push({
       id: postUrlRkey(alert.post_url) ?? postUrlRkey(matches[0]?.post_url) ?? alert.alert_id,
-      kind: alert.kind,
+      agency: agencyForKind(alert.kind),
+      mode: modeForKind(alert.kind),
       routes: incidentRoutes,
-      first_seen_ts: incidentFirstSeen,
-      // While active, don't report a resolution — a paired obs may carry its own
-      // earlier resolved_ts, which would read as "ended before it started."
-      resolved_ts: active ? null : (alert.resolved_ts ?? matches[0]?.resolved_ts ?? null),
-      active,
       sources: matches.length > 0 ? ['cta', 'bot'] : ['cta'],
-      cta: ctaBlock(alert),
-      // Schedule-anchored single-train Metra cancellation (null otherwise). Top-
-      // level on the incident — it's a Metra incident fact, not alert-text
-      // metadata, and the `cta` block is a CTA-era misnomer for the official
-      // alert that would misname it for Metra.
-      cancellation: alert.cancellation ?? null,
-      metra_status: metraStatusBlock(alert),
-      observations: matches,
+      lifecycle: lifecycleBlock({
+        firstSeenTs: incidentFirstSeen,
+        // While active, don't report a resolution — a paired obs may carry its own
+        // earlier resolved_ts, which would read as "ended before it started."
+        resolvedTs: active ? null : (alert.resolved_ts ?? matches[0]?.resolved_ts ?? null),
+        active,
+      }),
+      official_alert: officialAlertBlock(alert),
+      detections: matches.map(detectionBlock),
+      status: statusBlock(alert),
     });
     for (const o of matches) usedObsIds.add(o.id);
   }
@@ -316,21 +406,25 @@ function buildIncidents(builtAlerts, builtObservations) {
     if (usedObsIds.has(obs.id)) continue;
     incidents.push({
       id: postUrlRkey(obs.post_url) ?? String(obs.id),
-      kind: obs.kind,
+      agency: agencyForKind(obs.kind),
+      mode: modeForKind(obs.kind),
       routes: [obs.line],
-      // ts is the post time; onset_ts (when present) is the back-dated start.
-      // first_seen_ts tracks ts to match how observations sort/filter today;
-      // onset_ts stays available inside the observation for duration math.
-      first_seen_ts: obs.ts,
-      resolved_ts: obs.resolved_ts ?? null,
-      active: obs.active,
       sources: ['bot'],
-      cta: null,
-      observations: [obs],
+      lifecycle: lifecycleBlock({
+        // ts is the post time; onset_ts (when present) is the back-dated start.
+        // first_seen_ts tracks ts to match how observations sort/filter today.
+        firstSeenTs: obs.ts,
+        resolvedTs: obs.resolved_ts ?? null,
+        active: obs.active,
+        durationMs: obs.duration_ms ?? null,
+      }),
+      official_alert: null,
+      detections: [detectionBlock(obs)],
+      status: statusFromDetection(obs),
     });
   }
 
-  incidents.sort((a, b) => b.first_seen_ts - a.first_seen_ts);
+  incidents.sort((a, b) => b.lifecycle.first_seen_ts - a.lifecycle.first_seen_ts);
   return incidents;
 }
 
@@ -730,6 +824,7 @@ function main() {
   const incidents = buildIncidents(builtAlerts, [...builtObservations, ...builtMetraObservations]);
 
   const out = {
+    schema_version: 2,
     generated_at: Date.now(),
     data_start_ts: dataStart.min_ts ?? null,
     incidents,
@@ -745,6 +840,7 @@ function main() {
     // re-sighting an unchanged active alert produces byte-identical incidents.
     const dataOnly = JSON.stringify({
       data_start_ts: out.data_start_ts,
+      schema_version: out.schema_version,
       incidents: out.incidents,
     });
     let existingDataOnly = null;
@@ -757,6 +853,7 @@ function main() {
         existingHasLegacy = 'alerts' in existing || 'observations' in existing;
         existingDataOnly = JSON.stringify({
           data_start_ts: existing.data_start_ts,
+          schema_version: existing.schema_version,
           incidents: existing.incidents,
         });
       } catch (_) {}
@@ -784,4 +881,9 @@ if (require.main === module) {
   main();
 }
 
-module.exports = { buildIncidents, ctaBlock, metraTrainNumberFromTripId, postUrlRkey };
+module.exports = {
+  buildIncidents,
+  officialAlertBlock,
+  metraTrainNumberFromTripId,
+  postUrlRkey,
+};

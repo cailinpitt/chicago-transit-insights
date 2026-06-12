@@ -7,15 +7,18 @@
 const Fs = require('node:fs');
 
 const CSV_COLUMNS = [
-  'type',
-  'id',
-  'kind',
+  'record_type',
+  'incident_id',
+  'agency',
+  'mode',
   'routes',
+  'source',
+  'status_type',
   'headline',
-  'detection_source',
-  'signals',
+  'description',
   'from_station',
   'to_station',
+  'stations',
   'direction',
   'direction_label',
   'first_seen_ts',
@@ -25,10 +28,6 @@ const CSV_COLUMNS = [
   'active',
   'post_url',
   'resolved_post_url',
-  'cta_event_start_ts',
-  'cta_event_end_ts',
-  'cta_event_start_is_date_only',
-  'cta_event_end_is_date_only',
 ];
 
 function csvEscape(value) {
@@ -45,110 +44,71 @@ function isoOrEmpty(ms) {
   return new Date(ms).toISOString();
 }
 
-function observationSignals(obs) {
-  if (!obs) return [];
-  if (obs.detection_source === 'roundup') return obs.signals || [];
-  return obs.detection_source ? [obs.detection_source] : [];
-}
-
-function incidentHeadlineText(inc) {
-  if (!inc) return null;
-  if (inc.title) return inc.title;
-  if (inc.headline) return inc.headline;
-  if (inc.cta?.headline) return inc.cta.headline;
-  return null;
-}
-
-function flattenIncidents(incidents) {
-  const alerts = [];
-  const observations = [];
-  for (const inc of incidents || []) {
-    if (inc.cta) alerts.push(flattenIncidentAlert(inc));
-    for (const o of inc.observations || []) observations.push({ ...o, _incidentId: inc.id });
+function lifecycleDurationMinutes(lifecycle) {
+  if (!lifecycle) return '';
+  if (lifecycle.duration_ms != null) return Math.round(lifecycle.duration_ms / 60_000);
+  if (lifecycle.resolved_ts != null && lifecycle.first_seen_ts != null) {
+    return Math.round(
+      (lifecycle.resolved_ts - (lifecycle.onset_ts ?? lifecycle.first_seen_ts)) / 60_000,
+    );
   }
-  return { alerts, observations };
+  return '';
 }
 
-function flattenIncidentAlert(inc) {
-  const c = inc.cta;
+function officialRow(inc) {
+  const a = inc.official_alert;
+  const scope = a?.scope ?? {};
+  const lifecycle = a?.lifecycle ?? {};
   return {
-    alert_id: c.alert_id,
-    kind: inc.kind,
-    routes: inc.routes,
-    headline: incidentHeadlineText(inc) ?? c.headline,
-    short_description: c.short_description ?? null,
-    first_seen_ts: c.first_seen_ts,
-    resolved_ts: c.resolved_ts ?? null,
-    duration_ms: c.resolved_ts != null ? c.resolved_ts - c.first_seen_ts : null,
-    active: c.active,
-    post_url: c.post_url,
-    resolved_reply_url: c.resolved_reply_url ?? null,
-    affected_from_station: c.affected_from_station ?? null,
-    affected_to_station: c.affected_to_station ?? null,
-    affected_direction: c.affected_direction ?? null,
-    cta_event_start_ts: c.cta_event_start_ts ?? null,
-    cta_event_end_ts: c.cta_event_end_ts ?? null,
-    cta_event_start_is_date_only: c.cta_event_start_is_date_only ?? false,
-    cta_event_end_is_date_only: c.cta_event_end_is_date_only ?? false,
-    _incidentId: inc.id,
-  };
-}
-
-function alertRow(a) {
-  return {
-    type: 'alert',
-    id: a.alert_id,
-    kind: a.kind,
-    routes: (a.routes ?? []).join(';'),
-    headline: a.headline ?? '',
-    detection_source: '',
-    signals: '',
-    from_station: a.affected_from_station ?? '',
-    to_station: a.affected_to_station ?? '',
-    direction: a.affected_direction ?? '',
+    record_type: 'official_alert',
+    incident_id: inc.id,
+    agency: inc.agency,
+    mode: inc.mode,
+    routes: (inc.routes ?? []).join(';'),
+    source: 'official',
+    status_type: inc.status?.type ?? '',
+    headline: a?.headline ?? '',
+    description: a?.description ?? '',
+    from_station: scope.from_station ?? '',
+    to_station: scope.to_station ?? '',
+    stations: (scope.stations ?? scope.mentioned_stations ?? []).join(';'),
+    direction: scope.direction ?? '',
     direction_label: '',
-    first_seen_ts: isoOrEmpty(a.first_seen_ts),
+    first_seen_ts: isoOrEmpty(lifecycle.first_seen_ts),
     onset_ts: '',
-    resolved_ts: isoOrEmpty(a.resolved_ts),
-    duration_minutes:
-      a.resolved_ts != null && a.first_seen_ts != null
-        ? Math.round((a.duration_ms ?? a.resolved_ts - a.first_seen_ts) / 60_000)
-        : '',
-    active: a.active ? 'true' : 'false',
-    post_url: a.post_url ?? '',
-    resolved_post_url: a.resolved_reply_url ?? '',
-    cta_event_start_ts: isoOrEmpty(a.cta_event_start_ts),
-    cta_event_end_ts: isoOrEmpty(a.cta_event_end_ts),
-    cta_event_start_is_date_only:
-      a.cta_event_start_ts != null ? (a.cta_event_start_is_date_only ? 'true' : 'false') : '',
-    cta_event_end_is_date_only:
-      a.cta_event_end_ts != null ? (a.cta_event_end_is_date_only ? 'true' : 'false') : '',
+    resolved_ts: isoOrEmpty(lifecycle.resolved_ts),
+    duration_minutes: lifecycleDurationMinutes(lifecycle),
+    active: lifecycle.active ? 'true' : 'false',
+    post_url: a?.post_url ?? '',
+    resolved_post_url: a?.resolved_reply_url ?? '',
   };
 }
 
-function observationRow(o) {
+function detectionRow(inc, detection) {
+  const scope = detection.scope ?? {};
+  const lifecycle = detection.lifecycle ?? {};
   return {
-    type: 'observation',
-    id: `obs-${o.id}`,
-    kind: o.kind,
-    routes: o.line ?? '',
+    record_type: 'detection',
+    incident_id: inc.id,
+    agency: inc.agency,
+    mode: inc.mode,
+    routes: (inc.routes ?? []).join(';'),
+    source: detection.source ?? '',
+    status_type: inc.status?.type ?? '',
     headline: '',
-    detection_source: o.detection_source ?? '',
-    signals: observationSignals(o).join(';'),
-    from_station: o.from_station ?? '',
-    to_station: o.to_station ?? '',
-    direction: o.direction ?? '',
-    direction_label: o.direction_label ?? '',
-    first_seen_ts: isoOrEmpty(o.ts),
-    onset_ts: isoOrEmpty(o.onset_ts),
-    resolved_ts: isoOrEmpty(o.resolved_ts),
-    duration_minutes:
-      o.resolved_ts != null && o.ts != null
-        ? Math.round((o.duration_ms ?? o.resolved_ts - (o.onset_ts ?? o.ts)) / 60_000)
-        : '',
-    active: o.active ? 'true' : 'false',
-    post_url: o.post_url ?? '',
-    resolved_post_url: o.resolved_post_url ?? '',
+    description: detection.description ?? '',
+    from_station: scope.from_station ?? '',
+    to_station: scope.to_station ?? '',
+    stations: (scope.stations ?? []).join(';'),
+    direction: scope.direction ?? '',
+    direction_label: scope.direction_label ?? '',
+    first_seen_ts: isoOrEmpty(lifecycle.first_seen_ts),
+    onset_ts: isoOrEmpty(lifecycle.onset_ts),
+    resolved_ts: isoOrEmpty(lifecycle.resolved_ts),
+    duration_minutes: lifecycleDurationMinutes(lifecycle),
+    active: lifecycle.active ? 'true' : 'false',
+    post_url: detection.post_url ?? '',
+    resolved_post_url: detection.resolved_post_url ?? '',
   };
 }
 
@@ -156,16 +116,20 @@ function rowToCsv(row) {
   return CSV_COLUMNS.map((c) => csvEscape(row[c])).join(',');
 }
 
-function buildCsv(alerts, observations) {
-  const rows = [...(alerts ?? []).map(alertRow), ...(observations ?? []).map(observationRow)].sort(
-    (a, b) => (b.first_seen_ts < a.first_seen_ts ? -1 : b.first_seen_ts > a.first_seen_ts ? 1 : 0),
+function buildCsv(incidents) {
+  const rows = [];
+  for (const inc of incidents ?? []) {
+    if (inc.official_alert) rows.push(officialRow(inc));
+    for (const detection of inc.detections ?? []) rows.push(detectionRow(inc, detection));
+  }
+  rows.sort((a, b) =>
+    b.first_seen_ts < a.first_seen_ts ? -1 : b.first_seen_ts > a.first_seen_ts ? 1 : 0,
   );
   return `${[CSV_COLUMNS.join(','), ...rows.map(rowToCsv)].join('\n')}\n`;
 }
 
 function buildCsvFromPayload(payload) {
-  const { alerts, observations } = flattenIncidents(payload?.incidents || []);
-  return buildCsv(alerts, observations);
+  return buildCsv(payload?.incidents || []);
 }
 
 function main() {

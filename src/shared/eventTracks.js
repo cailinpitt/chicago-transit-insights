@@ -27,6 +27,73 @@ const slug = (s) =>
     .toLowerCase()
     .replace(/[^a-z0-9]/g, '');
 
+function incidentMode(incident) {
+  return incident?.mode ?? (incident?.kind === 'metra' ? 'commuter_rail' : incident?.kind);
+}
+
+function incidentLifecycle(incident) {
+  return (
+    incident?.lifecycle ?? {
+      first_seen_ts: incident?.first_seen_ts ?? null,
+      resolved_ts: incident?.resolved_ts ?? null,
+      active: incident?.active ?? false,
+    }
+  );
+}
+
+function officialAlert(incident) {
+  return incident?.official_alert ?? incident?.cta ?? null;
+}
+
+function detections(incident) {
+  return incident?.detections ?? incident?.observations ?? [];
+}
+
+function officialScope(alert) {
+  return (
+    alert?.scope ?? {
+      from_station: alert?.affected_from_station ?? null,
+      to_station: alert?.affected_to_station ?? null,
+      direction: alert?.affected_direction ?? null,
+      stations: alert?.affected_stations ?? [],
+    }
+  );
+}
+
+function officialLifecycle(alert) {
+  return (
+    alert?.lifecycle ?? {
+      first_seen_ts: alert?.first_seen_ts ?? null,
+      resolved_ts: alert?.resolved_ts ?? null,
+      active: alert?.active ?? false,
+    }
+  );
+}
+
+function detectionScope(detection) {
+  return (
+    detection?.scope ?? {
+      route: detection?.line ?? null,
+      from_station: detection?.from_station ?? null,
+      to_station: detection?.to_station ?? null,
+      direction: detection?.direction ?? null,
+      direction_label: detection?.direction_label ?? null,
+      stations: detection?.stations ?? [],
+    }
+  );
+}
+
+function detectionLifecycle(detection) {
+  return (
+    detection?.lifecycle ?? {
+      first_seen_ts: detection?.ts ?? null,
+      onset_ts: detection?.onset_ts ?? null,
+      resolved_ts: detection?.resolved_ts ?? null,
+      active: detection?.active ?? false,
+    }
+  );
+}
+
 // Decide whether a published incident can be replayed, and pull the fields the
 // track needs. Mirrors how the frontend (EventDetail → EventReplay) picks the
 // line / segment / direction, so the archived track keys and geometry line up
@@ -36,19 +103,29 @@ const slug = (s) =>
 // segment (from + to). Bus incidents have no schematic; segment-less incidents
 // have nothing to highlight.
 function pickReplayableIncident(incident) {
-  if (!incident || incident.kind !== 'train') return null;
-  const primary = incident.observations?.[0] ?? null;
-  const cta = incident.cta ?? null;
+  if (!incident || incidentMode(incident) !== 'train') return null;
+  const primary = detections(incident)[0] ?? null;
+  const alert = officialAlert(incident);
+  const primaryScope = detectionScope(primary);
+  const primaryLifecycle = detectionLifecycle(primary);
+  const alertScope = officialScope(alert);
+  const alertLifecycle = officialLifecycle(alert);
+  const lifecycle = incidentLifecycle(incident);
 
-  const lineLong = primary?.line ?? incident.routes?.[0] ?? null;
-  const from = primary?.from_station ?? cta?.affected_from_station ?? null;
-  const to = primary?.to_station ?? cta?.affected_to_station ?? null;
+  const lineLong = primaryScope.route ?? incident.routes?.[0] ?? null;
+  const from = primaryScope.from_station ?? alertScope.from_station ?? null;
+  const to = primaryScope.to_station ?? alertScope.to_station ?? null;
   if (!lineLong || !from || !to) return null;
 
   const lineShort = LONG_TO_SHORT[lineLong] ?? lineLong;
   const onset =
-    primary?.onset_ts ?? primary?.ts ?? cta?.first_seen_ts ?? incident.first_seen_ts ?? null;
-  const resolved = incident.resolved_ts ?? primary?.resolved_ts ?? cta?.resolved_ts ?? null;
+    primaryLifecycle.onset_ts ??
+    primaryLifecycle.first_seen_ts ??
+    alertLifecycle.first_seen_ts ??
+    lifecycle.first_seen_ts ??
+    null;
+  const resolved =
+    lifecycle.resolved_ts ?? primaryLifecycle.resolved_ts ?? alertLifecycle.resolved_ts ?? null;
   if (onset == null) return null;
 
   return {
@@ -57,11 +134,11 @@ function pickReplayableIncident(incident) {
     lineShort,
     from,
     to,
-    stations: primary?.stations?.length ? primary.stations : [from, to],
-    directionLabel: primary?.direction_label ?? cta?.affected_direction ?? null,
+    stations: primaryScope.stations?.length ? primaryScope.stations : [from, to],
+    directionLabel: primaryScope.direction_label ?? alertScope.direction ?? null,
     onset,
     resolved,
-    active: !!incident.active,
+    active: !!lifecycle.active,
   };
 }
 
