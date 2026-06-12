@@ -69,6 +69,12 @@ test('pairs a CTA alert with a matching bot observation into one incident', () =
   const incidents = buildIncidents([alert()], [obs({ ts: NOW + 5 * 60_000 })]);
   assert.equal(incidents.length, 1);
   const inc = incidents[0];
+  assert.equal('kind' in inc, false);
+  assert.equal('cta' in inc, false);
+  assert.equal('observations' in inc, false);
+  assert.equal('metra_status' in inc, false);
+  assert.equal('active' in inc, false);
+  assert.equal('first_seen_ts' in inc, false);
   assert.deepEqual(inc.sources, ['cta', 'bot']);
   assert.equal(inc.id, 'alertrkey'); // alert rkey preferred
   assert.equal(inc.agency, 'cta');
@@ -195,6 +201,103 @@ test('official Metra planned-work delay alerts export planned-delay status', () 
     type: 'planned-delay',
     train_number: null,
   });
+});
+
+test('consolidates same Metra planned-work notices across lines', () => {
+  const description = (minutes) =>
+    `Track construction will be taking place on Saturday, June 13 through Sunday, June 14. Trains may incur delays enroute up to ${minutes} minutes behind scheduled passing through the work zone. Please listen to announcements for any platform changes.`;
+  const incidents = buildIncidents(
+    [
+      alert({
+        alert_id: 'DevAPI-UPW',
+        kind: 'metra',
+        routes: ['UP-W'],
+        headline: 'Track Construction Saturday, June 13 through Sunday, June 14',
+        short_description: description(15),
+        first_seen_ts: NOW + 2 * 60_000,
+        post_url: url('upw'),
+      }),
+      alert({
+        alert_id: 'DevAPI-MDW',
+        kind: 'metra',
+        routes: ['MD-W'],
+        headline: 'Track Construction Saturday, June 13 through Sunday, June 14',
+        short_description: description(20),
+        first_seen_ts: NOW + 2 * 60_000,
+        post_url: url('mdw'),
+      }),
+      alert({
+        alert_id: 'DevAPI-BNSF',
+        kind: 'metra',
+        routes: ['BNSF'],
+        headline: 'Track Construction Saturday, June 13 through Sunday, June 14',
+        short_description: description(15),
+        first_seen_ts: NOW,
+        post_url: url('bnsf'),
+      }),
+      alert({
+        alert_id: 'DevAPI-ME',
+        kind: 'metra',
+        routes: ['ME'],
+        headline: 'Track Construction Saturday, June 13 through Sunday, June 14',
+        short_description: description(30),
+        first_seen_ts: NOW,
+        post_url: url('me'),
+      }),
+      alert({
+        alert_id: 'DevAPI-RI',
+        kind: 'metra',
+        routes: ['RI'],
+        headline: 'Track Construction Saturday, June 13 through Sunday, June 14',
+        short_description: description(20),
+        first_seen_ts: NOW + 60_000,
+        post_url: url('ri'),
+      }),
+    ],
+    [],
+  );
+
+  assert.equal(incidents.length, 1);
+  const inc = incidents[0];
+  assert.equal(inc.id, 'bnsf');
+  assert.deepEqual(inc.routes, ['bnsf', 'md-w', 'me', 'ri', 'up-w']);
+  assert.equal(inc.lifecycle.first_seen_ts, NOW);
+  assert.equal(inc.lifecycle.active, true);
+  assert.deepEqual(inc.status, { type: 'planned-delay', train_number: null });
+  assert.equal(inc.official_alert.id, 'DevAPI-BNSF');
+  assert.deepEqual(
+    inc.official_alerts.map((a) => a.id),
+    ['DevAPI-BNSF', 'DevAPI-ME', 'DevAPI-RI', 'DevAPI-MDW', 'DevAPI-UPW'],
+  );
+  assert.deepEqual(
+    inc.official_alerts.map((a) => postUrlRkey(a.post_url)),
+    ['bnsf', 'me', 'ri', 'mdw', 'upw'],
+  );
+});
+
+test('does not consolidate non-planned Metra delays across lines', () => {
+  const incidents = buildIncidents(
+    [
+      alert({
+        alert_id: 'DevAPI-RI',
+        kind: 'metra',
+        routes: ['RI'],
+        headline: 'RID #426 Delayed',
+        short_description: 'RID train #426 is operating 30 minutes behind schedule.',
+        post_url: url('ri-delay'),
+      }),
+      alert({
+        alert_id: 'DevAPI-ME',
+        kind: 'metra',
+        routes: ['ME'],
+        headline: 'MED #126 Delayed',
+        short_description: 'MED train #126 is operating 30 minutes behind schedule.',
+        post_url: url('me-delay'),
+      }),
+    ],
+    [],
+  );
+  assert.equal(incidents.length, 2);
 });
 
 test('official Metra cancellation alerts export cancellation status', () => {

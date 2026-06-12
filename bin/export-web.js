@@ -24,6 +24,7 @@ const {
 } = require('../src/shared/observationDescribe');
 const { directionLabel } = require('../src/shared/directionLabel');
 const { stationsOnSegment, normalizePulseDirection } = require('../src/shared/trainSegment');
+const { ALL_LINES: METRA_LINE_ORDER_RAW } = require('../src/metra/lines');
 
 const DB_PATH =
   process.env.HISTORY_DB_PATH || Path.join(__dirname, '..', 'state', 'history.sqlite');
@@ -33,6 +34,8 @@ const DB_PATH =
 function normalizeMetraLine(key) {
   return key == null ? key : String(key).toLowerCase();
 }
+
+const METRA_LINE_ORDER = METRA_LINE_ORDER_RAW.map(normalizeMetraLine);
 
 // Convert an AT Protocol post URI to a bsky.app URL, or null if the URI is
 // missing / malformed.
@@ -297,6 +300,152 @@ function statusFromDetection(obs) {
   return null;
 }
 
+function plainTextKey(s) {
+  return String(s ?? '')
+    .toLowerCase()
+    .replace(/[’']/g, '')
+    .replace(/[.,;:!?]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function plannedWorkDateKey(incident) {
+  const alert = incident.official_alert;
+  const text = [alert?.headline, alert?.description].filter(Boolean).join(' ');
+  const m =
+    /\b(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday),?\s+([a-z]+)\s+(\d{1,2})\s+through\s+(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday),?\s+([a-z]+)\s+(\d{1,2})\b/i.exec(
+      text,
+    );
+  if (!m) return null;
+  return `${m[1].toLowerCase()}-${m[2]}-${m[3].toLowerCase()}-${m[4]}`;
+}
+
+function normalizedPlannedWorkDescription(s) {
+  return plainTextKey(s)
+    .replace(/\bup to \d+\s+minutes?\b/g, 'up to n minutes')
+    .replace(/\b\d+\s*(?:to|-)\s*\d+\s+minutes?\b/g, 'n minutes')
+    .replace(/\b\d+\s+minutes?\b/g, 'n minutes');
+}
+
+function metraRouteRank(incident) {
+  const route = incident.routes?.[0] ?? '';
+  const idx = METRA_LINE_ORDER.indexOf(route);
+  return idx === -1 ? Number.MAX_SAFE_INTEGER : idx;
+}
+
+function canonicalIncidentSort(a, b) {
+  return (
+    (a.lifecycle.first_seen_ts ?? Number.MAX_SAFE_INTEGER) -
+      (b.lifecycle.first_seen_ts ?? Number.MAX_SAFE_INTEGER) ||
+    metraRouteRank(a) - metraRouteRank(b) ||
+    String(a.id).localeCompare(String(b.id))
+  );
+}
+
+function plannedMetraGroupKey(incident) {
+  if (incident.agency !== 'metra') return null;
+  if (incident.mode !== 'commuter_rail') return null;
+  if (incident.status?.type !== 'planned-delay') return null;
+  if (!incident.official_alert) return null;
+  const headline = plainTextKey(incident.official_alert.headline);
+  const description = normalizedPlannedWorkDescription(incident.official_alert.description);
+  const text = `${headline} ${description}`;
+  if (!/\b(track construction|construction|planned work|work zone|maintenance)\b/.test(text)) {
+    return null;
+  }
+  if (!/\bdelay/.test(text) && !/\bn minutes?\b/.test(text)) return null;
+  const dateKey = plannedWorkDateKey(incident);
+  if (!dateKey) return null;
+  return [headline, dateKey, description].join('|');
+}
+
+function sortRoutesForMode(mode, routes) {
+  const unique = [...new Set((routes || []).filter(Boolean))];
+  if (mode === 'commuter_rail') {
+    return unique.sort((a, b) => {
+      const ai = METRA_LINE_ORDER.indexOf(a);
+      const bi = METRA_LINE_ORDER.indexOf(b);
+      return (
+        (ai === -1 ? Number.MAX_SAFE_INTEGER : ai) - (bi === -1 ? Number.MAX_SAFE_INTEGER : bi) ||
+        String(a).localeCompare(String(b))
+      );
+    });
+  }
+  return unique;
+}
+
+function mergeLifecycle(lifecycles) {
+  const firstSeen = Math.min(...lifecycles.map((l) => l?.first_seen_ts).filter((ts) => ts != null));
+  const active = lifecycles.some((l) => l?.active);
+  const resolvedValues = lifecycles.map((l) => l?.resolved_ts).filter((ts) => ts != null);
+  const resolvedTs = active || resolvedValues.length === 0 ? null : Math.max(...resolvedValues);
+  return lifecycleBlock({
+    firstSeenTs: Number.isFinite(firstSeen) ? firstSeen : null,
+    resolvedTs,
+    active,
+  });
+}
+
+function consolidateMetraPlannedWorkIncidents(incidents) {
+  const groups = new Map();
+  const passthrough = [];
+  for (const incident of incidents) {
+    const key = plannedMetraGroupKey(incident);
+    if (!key) {
+      passthrough.push(incident);
+      continue;
+    }
+    let group = groups.get(key);
+    if (!group) {
+      group = [];
+      groups.set(key, group);
+    }
+    group.push(incident);
+  }
+
+  const consolidated = [...passthrough];
+  for (const group of groups.values()) {
+    if (group.length === 1) {
+      consolidated.push(group[0]);
+      continue;
+    }
+    const sorted = [...group].sort(canonicalIncidentSort);
+    const primary = sorted[0];
+    const routes = sortRoutesForMode(
+      primary.mode,
+      sorted.flatMap((incident) => incident.routes || []),
+    );
+    const detections = sorted.flatMap((incident) => incident.detections || []);
+    const sources = [...new Set(sorted.flatMap((incident) => incident.sources || []))];
+    const officialAlerts = sorted
+      .map((incident) => incident.official_alert)
+      .filter(Boolean)
+      .sort((a, b) => {
+        const al = a.lifecycle ?? {};
+        const bl = b.lifecycle ?? {};
+        return (
+          (al.first_seen_ts ?? Number.MAX_SAFE_INTEGER) -
+            (bl.first_seen_ts ?? Number.MAX_SAFE_INTEGER) ||
+          String(a.id).localeCompare(String(b.id))
+        );
+      });
+    consolidated.push({
+      ...primary,
+      id: primary.id,
+      routes,
+      sources,
+      lifecycle: mergeLifecycle(sorted.map((incident) => incident.lifecycle)),
+      official_alert: primary.official_alert,
+      official_alerts: officialAlerts,
+      detections,
+      status: primary.status,
+    });
+  }
+
+  consolidated.sort((a, b) => b.lifecycle.first_seen_ts - a.lifecycle.first_seen_ts);
+  return consolidated;
+}
+
 // Combine official CTA alerts and bot observations into one incident per
 // underlying disruption. This is the merge that used to run client-side in
 // cta-alert-history's mergeMatchingIncidents — moved here so the published JSON
@@ -432,7 +581,7 @@ function buildIncidents(builtAlerts, builtObservations) {
   }
 
   incidents.sort((a, b) => b.lifecycle.first_seen_ts - a.lifecycle.first_seen_ts);
-  return incidents;
+  return consolidateMetraPlannedWorkIncidents(incidents);
 }
 
 function main() {
@@ -890,6 +1039,7 @@ if (require.main === module) {
 
 module.exports = {
   buildIncidents,
+  consolidateMetraPlannedWorkIncidents,
   officialAlertBlock,
   metraTrainNumberFromTripId,
   postUrlRkey,
