@@ -16,6 +16,7 @@ const RAMP_FILL_RATIO = 0.8; // tail median ≥ this × expected → pipeline is
 const RAMP_TAIL_FRACTION = 0.25; // tail = last 25%, min 3
 
 const { median } = require('../shared/stats');
+const { findParkedBusVids, PARKED_WINDOW_MS } = require('./bunching');
 
 // During AM ramp-up the full-window median lags reality but the tail tracks
 // current service — used to gate against firing on a filling pipeline.
@@ -46,6 +47,15 @@ async function detectBusGhosts({
       drop('no_observations', { route });
       continue;
     }
+
+    // Confirmed-parked buses (barely moved over the last ~5 min) shouldn't count
+    // as service in the *displayed* headway — a dead/laid-over bus broadcasting
+    // on the route otherwise inflates "observed" and makes the gap read better
+    // than the street feels. Route-wide set over the recent window; firing
+    // counts deliberately ignore this (a bus that ran most of the hour then died
+    // still served most of the hour). Safe no-op when obs lack pdist.
+    const maxTs = obs.reduce((m, o) => (o.ts > m ? o.ts : m), 0);
+    const parkedVids = findParkedBusVids(obs.filter((o) => o.ts >= maxTs - PARKED_WINDOW_MS));
 
     // Skip the whole route on any pattern resolution failure — expectedActive
     // still counts trips for that pid, so dropping observations alone would
@@ -167,11 +177,25 @@ async function detectBusGhosts({
         continue;
       }
 
+      // Displayed service level: the parked-filtered count over the recent
+      // (tail) window, so a worsening outage and dead buses both read as bad as
+      // they currently are. Drives the post's "X of Y" + headway; firing above
+      // still uses the full-window, unfiltered observedActive for stability.
+      const sortedSnaps = [...perSnapshot.entries()].sort((a, b) => a[0] - b[0]);
+      const tailLen = Math.max(3, Math.ceil(sortedSnaps.length * RAMP_TAIL_FRACTION));
+      const displayCounts = sortedSnaps.slice(-tailLen).map(([, set]) => {
+        let n = 0;
+        for (const v of set) if (!parkedVids.has(v)) n++;
+        return n;
+      });
+      const observedDisplay = median(displayCounts);
+
       events.push({
         route,
         direction,
         expectedActive: active,
         observedActive,
+        observedDisplay,
         missing,
         snapshots: perSnapshot.size,
         headway,

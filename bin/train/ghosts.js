@@ -22,28 +22,24 @@ const { logDropSummary } = require('../../src/shared/ghostsLog');
 const { findStationByDestination } = require('../../src/train/findStation');
 const { recordMetaSignal, recordGhostEvent } = require('../../src/shared/history');
 const { MISSING_ABS_THRESHOLD } = require('../../src/bus/ghosts');
+const { describeGhost } = require('../../src/shared/ghostFormat');
 
 const WINDOW_MS = 60 * 60 * 1000;
 
 function formatLine(event) {
   const lineName = LINE_NAMES[event.line];
   const emoji = LINE_EMOJI[event.line];
-  const missing = Math.round(event.missing);
-  const expected = Math.round(event.expectedActive);
-  // Derive the percentage from the rounded counts shown, not the raw fractional
-  // hourly averages — otherwise the displayed "X of Y" and "(Z%)" disagree.
-  const pct = expected > 0 ? Math.round((missing / expected) * 100) : 0;
   const dest = event.destination ? ` → ${event.destination}` : '';
-  if (event.headway == null) {
-    return `${emoji} ${lineName} Line${dest} · ${missing} of ${expected} missing (${pct}%)`;
-  }
-  const scheduledHeadway = Math.round(event.headway);
-  const ratio = event.expectedActive / Math.max(event.observedActive, 1);
-  if (ratio > 3) {
-    return `${emoji} ${lineName} Line${dest} · ${missing} of ${expected} missing (${pct}%) · scheduled every ~${scheduledHeadway} min`;
-  }
-  const effectiveHeadway = Math.round(event.headway * ratio);
-  return `${emoji} ${lineName} Line${dest} · ${missing} of ${expected} missing (${pct}%) · every ~${effectiveHeadway} min instead of ~${scheduledHeadway}`;
+  // Same shared math as buses, so the counts and headway always agree and the
+  // headway never reads better than schedule. Trains have no parked/recent-
+  // window refinement (that's pdist-based, bus-only), so observed = observedActive.
+  const { expectedShown, missingShown, pct, headwayPhrase } = describeGhost({
+    expectedActive: event.expectedActive,
+    observed: event.observedActive,
+    headway: event.headway,
+  });
+  const head = `${emoji} ${lineName} Line${dest} · ${missingShown} of ${expectedShown} missing (${pct}%)`;
+  return headwayPhrase ? `${head} · ${headwayPhrase}` : head;
 }
 
 function buildPostThread(events) {

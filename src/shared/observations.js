@@ -250,7 +250,7 @@ function getRecentMetraPositions(sinceTs) {
 function getBusObservations(route, sinceTs) {
   return getDb()
     .prepare(`
-    SELECT ts, direction, vehicle_id, destination
+    SELECT ts, direction, vehicle_id, destination, pdist
     FROM observations
     WHERE kind = 'bus' AND route = ? AND ts >= ?
   `)

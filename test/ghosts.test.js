@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { detectBusGhosts, MIN_SNAPSHOTS } = require('../src/bus/ghosts');
+const { describeGhost } = require('../src/shared/ghostFormat');
 const { buildRollupPost } = require('../src/shared/post');
 const { detectTrainGhosts } = require('../src/train/ghosts');
 
@@ -562,4 +563,83 @@ test('ramp-up gate applies to trains too (loop line)', async () => {
     isLoopLine: () => true,
   });
   assert.equal(events.length, 0);
+});
+
+// --- describeGhost: counts + headway derived from one set of rounded integers ---
+
+test('describeGhost derives the headway from the shown counts (4 of 9 → ~18, not ~16)', () => {
+  // The old code used the raw fractional ratio, so "4 of 9" could print ~16.
+  const { expectedShown, missingShown, pct, headwayPhrase } = describeGhost({
+    expectedActive: 9,
+    observed: 5,
+    headway: 10,
+  });
+  assert.equal(expectedShown, 9);
+  assert.equal(missingShown, 4);
+  assert.equal(pct, 44);
+  assert.equal(headwayPhrase, 'every ~18 min instead of ~10');
+});
+
+test('describeGhost floors the effective headway at the scheduled headway', () => {
+  // observed > expected (no real deficit) must never read "better than schedule".
+  const { headwayPhrase } = describeGhost({ expectedActive: 5, observed: 6, headway: 10 });
+  assert.equal(headwayPhrase, 'every ~10 min instead of ~10');
+});
+
+test('describeGhost falls back to "scheduled every" above 3x', () => {
+  const { headwayPhrase } = describeGhost({ expectedActive: 12, observed: 2, headway: 8 });
+  assert.equal(headwayPhrase, 'scheduled every ~8 min');
+});
+
+test('describeGhost omits the headway phrase when headway is unknown', () => {
+  const { headwayPhrase, missingShown, expectedShown } = describeGhost({
+    expectedActive: 8,
+    observed: 4,
+    headway: null,
+  });
+  assert.equal(headwayPhrase, null);
+  assert.equal(missingShown, 4);
+  assert.equal(expectedShown, 8);
+});
+
+// --- observedDisplay: parked-filtered, recent-window service level ---
+
+// Obs with pdist so the parked detector can run. Buses v0..vN-1 each appear in
+// every snapshot; `parkedVids` stay at a constant pdist (drift 0), the rest
+// advance. 60s cadence so ≥4 snapshots land in the 5-min parked window.
+function buildObsWithPdist({ pid, snapshots, vids, parked = [], intervalMs = 60 * 1000 }) {
+  const rows = [];
+  const ts0 = 1_700_000_000_000;
+  for (let i = 0; i < snapshots; i++) {
+    const ts = ts0 + i * intervalMs;
+    for (const v of vids) {
+      const pdist = parked.includes(v) ? 5000 : 1000 + v * 1000 + i * 600;
+      rows.push({ ts, direction: pid, vehicle_id: `v${v}`, destination: null, pdist });
+    }
+  }
+  return rows;
+}
+
+test('observedDisplay drops confirmed-parked buses from the displayed service level', async () => {
+  // 3 buses observed (fires: expected 6, missing 3), but v2 is parked → the
+  // displayed count is 2, so the post reads "4 of 6", worse than the raw 3.
+  const obs = buildObsWithPdist({ pid: 'p1', snapshots: 10, vids: [0, 1, 2], parked: [2] });
+  const events = await detectBusGhosts({
+    routes: ['66'],
+    getObservations: () => obs,
+    getPattern: async () => mkPattern('Eastbound'),
+    expectedHeadway: () => 10,
+    expectedDuration: () => 60,
+    expectedActive: () => 6,
+  });
+  assert.equal(events.length, 1);
+  assert.equal(events[0].observedActive, 3); // firing count unchanged
+  assert.equal(events[0].observedDisplay, 2); // parked v2 excluded
+  const { missingShown, expectedShown } = describeGhost({
+    expectedActive: events[0].expectedActive,
+    observed: events[0].observedDisplay,
+    headway: events[0].headway,
+  });
+  assert.equal(expectedShown, 6);
+  assert.equal(missingShown, 4);
 });

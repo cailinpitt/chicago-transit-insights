@@ -21,9 +21,9 @@ If "actually seeing" is meaningfully smaller than "should be running" — and st
 
 The post looks like this:
 
-> 🚌 Route 94 (California) NB · 3 of 7 missing (45%) · every ~29 min instead of ~16
+> 🚌 Route 94 (California) NB · 3 of 7 missing (43%) · every ~28 min instead of ~16
 
-That's saying: California buses going north should be coming every 16 minutes; they're effectively coming every 29 because three of the seven that should be on the road aren't.
+That's saying: California buses going north should be coming every 16 minutes; they're effectively coming every 28 because three of the seven that should be on the road aren't (16 × 7⁄4).
 
 ## The technical version
 
@@ -88,7 +88,31 @@ Train detection (`src/train/ghosts.js`) mirrors this exactly, with two extra wri
 
 ### Step 5 — posting
 
-If any events survive the gates, they're sorted by `missing` descending and rendered into a single Bluesky post. The headway shown in each line is *effective* — the scheduled headway scaled by the ratio of expected-to-observed — so "every ~29 min instead of ~16" reflects the rider experience under the deficit, not the schedule on paper. When the deficit is so large that the effective-headway estimate explodes (>3× scheduled), we fall back to "scheduled every ~X min" so the post stops claiming a misleadingly precise number.
+If any events survive the gates, they're sorted by `missing` descending and rendered into a single Bluesky post, one line each:
+
+> 🚌 Route 94 (California) NB · 3 of 7 missing (43%) · every ~28 min instead of ~16
+
+**How the headway is computed (`describeGhost`, `src/shared/ghostFormat.js`).** The headway shown is *effective* — the scheduled headway scaled up by how much service is missing. The model: the number of buses simultaneously on a route ≈ trip duration ÷ headway, so active count is inversely proportional to headway. Invert it and the effective headway is just the scheduled headway × (expected ÷ still-running):
+
+```
+effective headway = scheduled headway × expectedShown / (expectedShown − missingShown)
+```
+
+So "3 of 7 missing" on a 16-min route → 16 × 7/4 = **~28 min**. Two deliberate properties:
+
+- **Counts and headway are derived from the same rounded integers.** Earlier the percentage came from rounded counts but the headway from the *raw* fractional ratio, so "4 of 9 missing" could print "~16" when 4-of-9 actually implies ~18. Now both come from the displayed `X of Y`, so they always agree and the number is reproducible by a reader.
+- **The effective headway is floored at the scheduled headway.** A route that's missing buses is never reported as running *better* than its schedule (a rounding artifact that could otherwise show "every ~9 instead of ~10").
+
+When the deficit is so large the estimate explodes (>3× scheduled), we fall back to "scheduled every ~X min" rather than claim a misleadingly precise number.
+
+**What counts as "still running" (bus only).** The displayed count isn't the raw full-hour observed count — it's measured two ways to stay honest about *current* conditions:
+
+- **Parked/dead buses are excluded.** A bus that's barely moved over the last ~5 minutes (the same confirmed-parked test `bunching.js` uses) isn't providing service, so it doesn't count toward "still running" — otherwise a laid-over or dead bus broadcasting on the route makes the gap read better than the street feels.
+- **The recent window, not the whole hour.** The displayed service level uses the tail (most recent ~25%) of the window, so a *worsening* outage reads as bad as it currently is rather than being averaged against the healthier start of the hour.
+
+This is display only: the **firing decision** (Step 3–4) still uses the robust full-hour median observed count, so what gets *posted* doesn't change, only how the line reads. Trains have no `pdist`, so the parked/recent-window refinement is bus-only — train lines use the same `describeGhost` math on their full-window observed count.
+
+A note on what the number does and doesn't capture: it's a *mean* headway — total time ÷ buses. It does not model bunching (if the surviving buses clump together, the mean gap is unchanged but riders in the resulting hole wait longer than the mean implies). That's a deliberate choice: a mean is route-agnostic and makes no assumption about when riders arrive.
 
 If no events clear the gates, the bot stays silent. Silence is the correct answer most hours.
 
@@ -103,6 +127,7 @@ The CTA publishes a schedule. Live vehicle positions are public. The interesting
 - `src/shared/observations.js` — observation storage and roll-off.
 - `src/shared/gtfs.js` — index lookup helpers.
 - `src/bus/ghosts.js`, `src/train/ghosts.js` — core detection and gates.
+- `src/shared/ghostFormat.js` — `describeGhost`: shared count + effective-headway phrasing for both bus and train post lines.
 - `bin/bus/ghosts.js`, `bin/train/ghosts.js` — hourly entry points (cron).
 
 ## Trailing-tail override

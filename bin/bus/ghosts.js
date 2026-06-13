@@ -5,6 +5,7 @@ const argv = require('minimist')(process.argv.slice(2));
 
 const { names: routeNames, ghosts: ghostRoutes, allRoutes } = require('../../src/bus/routes');
 const { detectBusGhosts } = require('../../src/bus/ghosts');
+const { describeGhost } = require('../../src/shared/ghostFormat');
 const { buildRollupThread } = require('../../src/shared/post');
 const { resolveReplyRef } = require('../../src/shared/bluesky');
 const { loadPattern } = require('../../src/bus/patterns');
@@ -34,25 +35,18 @@ function formatLine(event) {
   const name = routeNames[event.route];
   const title = name ? `Route ${event.route} (${name})` : `Route ${event.route}`;
   const dir = abbreviateDirection(event.direction);
-  const missing = Math.round(event.missing);
-  const expected = Math.round(event.expectedActive);
-  // Derive the percentage from the rounded counts shown, not the raw fractional
-  // hourly averages — otherwise the displayed "X of Y" and "(Z%)" disagree
-  // (e.g. 4 of 11 reading 33% instead of 36%).
-  const pct = expected > 0 ? Math.round((missing / expected) * 100) : 0;
-  // Headway can be null mid-route-coverage hours; shorter sentence then.
-  if (event.headway == null) {
-    return `🚌 ${title} ${dir} · ${missing} of ${expected} missing (${pct}%)`;
-  }
-  const scheduledHeadway = Math.round(event.headway);
-  // Above 3× scheduled, the effective-headway display explodes into noise —
-  // fall back to "scheduled every ~X min".
-  const ratio = event.expectedActive / Math.max(event.observedActive, 1);
-  if (ratio > 3) {
-    return `🚌 ${title} ${dir} · ${missing} of ${expected} missing (${pct}%) · scheduled every ~${scheduledHeadway} min`;
-  }
-  const effectiveHeadway = Math.round(event.headway * ratio);
-  return `🚌 ${title} ${dir} · ${missing} of ${expected} missing (${pct}%) · every ~${effectiveHeadway} min instead of ~${scheduledHeadway}`;
+  // Describe the *current* service: the parked-filtered, recent-window count.
+  // describeGhost derives the counts and the headway from the same rounded
+  // integers, so the "X of Y" and the headway always agree. (observedActive is
+  // the older, full-window field — fall back to it for safety.)
+  const observed = event.observedDisplay != null ? event.observedDisplay : event.observedActive;
+  const { expectedShown, missingShown, pct, headwayPhrase } = describeGhost({
+    expectedActive: event.expectedActive,
+    observed,
+    headway: event.headway,
+  });
+  const head = `🚌 ${title} ${dir} · ${missingShown} of ${expectedShown} missing (${pct}%)`;
+  return headwayPhrase ? `${head} · ${headwayPhrase}` : head;
 }
 
 function buildPostThread(events) {
