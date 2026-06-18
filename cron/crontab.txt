@@ -1,53 +1,21 @@
 # ============================================================================
-# CTA-INSIGHTS CRONTAB — source of truth.
+# CTA-INSIGHTS cron block — source of truth for the live crontab.
 # ============================================================================
 #
-# ⚠️  DANGER — `crontab <file>` REPLACES EVERY CRON JOB FOR THE USER. ⚠️
+# Install with:   scripts/install-crontab.sh
+# (safe marker-merge — replaces only this block, never your other cron jobs.)
 #
-# Only use the destructive `crontab cron/crontab.txt` form on a server where
-# you are certain no other cron jobs exist. Anywhere else, the install will
-# silently wipe every unrelated entry on the user's crontab. Use the
-# marker-based merge below instead.
-#
-# Safe install procedure (works whether or not other jobs exist, and is
-# idempotent — repeated runs leave one CTA-INSIGHTS block in the live
-# crontab, never duplicates):
-#
-#   1. Snapshot the live crontab:
-#        crontab -l > /tmp/live.crontab
-#   2. Strip any existing CTA-INSIGHTS block from the live crontab:
-#        awk '/^# CTA-INSIGHTS-START/{skip=1} /^# CTA-INSIGHTS-END/{skip=0; next} !skip' \
-#          /tmp/live.crontab > /tmp/live.stripped
-#   3. Extract just the marker block (NOT the docs above) from this file:
-#        awk '/^# CTA-INSIGHTS-START/,/^# CTA-INSIGHTS-END/' cron/crontab.txt \
-#          > /tmp/cta-block.txt
-#   4. Substitute the repo path placeholder (cron does NOT expand variables
-#      in R= assignments — must be inlined):
-#        sed -i "s|/path/to/cta-insights|$(pwd)|g" /tmp/cta-block.txt
-#   5. Concat + install:
-#        cat /tmp/live.stripped /tmp/cta-block.txt | crontab -
-#   6. Verify line counts pre/post match for unrelated jobs, and that the
-#      installed R= line is a real absolute path (not "/path/to/..."):
-#        crontab -l | grep "^R="
-#
-# IMPORTANT: only the content between # CTA-INSIGHTS-START and
-# # CTA-INSIGHTS-END below gets installed by the procedure above. The
-# install header (R= path, comments) lives INSIDE the markers so a
-# repeated merge replaces them in place rather than stacking.
-#
-# CRON DOES NOT EXPAND VARIABLES IN ASSIGNMENT LINES. The R= value below
-# uses a literal path placeholder (`/path/to/cta-insights`) that step 4 of
-# the install procedure MUST substitute via sed before piping to crontab,
-# e.g. `sed 's|/path/to/cta-insights|/home/cailin/Development/cta-insights|g'`.
-# Earlier we used `R=$REPO_ROOT/bin/cron-run.sh` with REPO_ROOT defined on
-# the line above, which compiles fine but cron stores R as the literal
-# string `$REPO_ROOT/bin/cron-run.sh` and every job silently fails.
+# Trains, buses, Metra, recaps, health audits, reference-data refresh, web-data
+# publish, and backups all run here.
+# The /path/to/cta-insights placeholder is filled in with the repo checkout at
+# install (cron does NOT expand variables in R= assignment lines, so the path
+# must be inlined — the install script does the substitution).
+# Logs go to cron/<name>-cron.log (gitignored).
 
 # CTA-INSIGHTS-START
 
-# All jobs run via bin/cron-run.sh <log-name> <script> [args...] which
-# handles cd, timestamping, and log redirection. Substitute the path
-# placeholder for the actual repo checkout before installing.
+# All jobs run via bin/cron-run.sh <log-name> <script> [args...] which handles
+# cd, timestamping, and log redirection.
 R=/path/to/cta-insights/bin/cron-run.sh
 
 # --- Trains ---
