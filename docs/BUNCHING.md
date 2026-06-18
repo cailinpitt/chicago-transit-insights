@@ -104,6 +104,56 @@ that reappeared under a different `pid` is a *proven* turnaround (forced via an
 explicit `turnaroundEnd`), and the U-turn glyph **parks** at the terminus rather
 than fading (`turnaroundPark`).
 
+## Cross-route / cross-line bunching
+
+The detectors above are *per-route*: each groups by one pattern/line and measures
+distance **along that route**. They can't see a pileup where vehicles from
+*different* routes converge on one spot — 2 #22 + 3 #36 stacked at Clark &
+Belmont, or Brown/Orange/Pink trains knotted on the shared Loop track. A #22 at
+`pdist 12,000` and a #36 at `pdist 3,000` can sit at the same corner, but those
+pdists are different coordinate systems, so the per-route sweep never compares
+them.
+
+Cross-route bunching is therefore a **geographic** detector, not an along-route
+one. The new primitive is `src/shared/geoClusters.js#clusterByProximity`:
+connected-components clustering on raw lat/lon — two vehicles are linked when
+within a radius, a cluster is a maximal linked group. The surface detectors
+(`src/{bus,train}/crossBunching.js`) run it over the *whole* fleet snapshot and
+keep clusters that pass three gates:
+
+1. **≥ 2 distinct routes/lines** — otherwise it's ordinary bunching the
+   per-route detector already catches.
+2. **≥ 3 vehicles** — a pileup, not one bus meeting another.
+3. **Congestion** — ≥ 2 members must be confirmed barely-moving (buses via
+   `findParkedBusVids`; trains via recent-position drift < ~350 ft). This is what
+   separates a real pileup from vehicles merely crossing the same junction in
+   motion.
+
+Radius defaults: **660 ft** bus (~an intersection + its approaches), **1,500 ft**
+train (station + platform approach). Clusters rank most-vehicles-first,
+tie-break tightest span.
+
+### Posting & the place key
+
+The bins (`bin/{bus,train}/cross-bunching.js`) post to the bus / train account
+with an intersection map (`src/map/crossBunching.js`): each vehicle is a
+numbered disc colored by route, plus a legend. The whole incident lifecycle —
+cooldown, daily cap, callouts, record — reuses `history.js` but is **keyed on the
+place** (rounded centroid / nearest stop) under a new `kind` (`bus-multi` /
+`train-multi`), since the incident *is* a location, not a route.
+
+### Suppression (cross-route beats per-route)
+
+The cross-route bin runs **1 minute before** the per-route bin (see
+`cron/crontab.txt`). When it posts, it records the cluster's member vehicle/run
+ids (`bunching_events.member_ids`). The per-route bins consult
+`history.recentCrossBunchMemberIds()` and **skip** any candidate that shares ≥ 2
+vehicles with a recently-posted pileup — the multi-route post is the better
+story, so the same physical pileup is never posted twice.
+
+Timelapse video for cross-route posts is a planned follow-up; v1 ships the
+static map only.
+
 ## Why this approach
 
 The signal is geometric, not statistical: vehicles on the same pattern, close together, in service territory. Most of the code is filtering — terminal layovers, ghost reports, opposite-direction noise — to make sure the post matches what a rider on the street would actually see.

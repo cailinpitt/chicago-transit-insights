@@ -57,6 +57,10 @@ R=/path/to/cta-insights/bin/cron-run.sh
 # separate top-level posts instead of replying to one another.
 0-58/2  *  *  *  *   $R train-pulse      bin/train/pulse.js
 4-59/15 *  *  *  *   $R train-bunching   bin/train/bunching.js
+# cross-line pileup (2+ lines, e.g. the shared Loop). Runs 1 min BEFORE
+# train-bunching so a posted multi-line pileup suppresses the per-line post for
+# the same trains (recentCrossBunchMemberIds, 10-min window).
+3-59/15 *  *  *  *   $R train-cross-bunching bin/train/cross-bunching.js
 1-59/2  *  *  *  *   $R train-alerts     bin/train/alerts.js
 7-59/15 *  *  *  *   $R train-gaps       bin/train/gaps.js
 0       */2 *  *  *  $R train-speedmap   bin/train/speedmap.js
@@ -70,6 +74,10 @@ R=/path/to/cta-insights/bin/cron-run.sh
 4-59/5  *  *  *  *   $R incident-roundup bin/incident-roundup.js
 
 # --- Buses ---
+# cross-route pileup (2+ routes at one corner). Runs 1 min BEFORE bus-bunching
+# so a posted multi-route pileup suppresses the per-route post for the same
+# buses (recentCrossBunchMemberIds, 10-min window).
+0-59/20 *  *  *  *   $R bus-cross-bunching bin/bus/cross-bunching.js
 1-59/20 *  *  *  *   $R bus-bunching     bin/bus/bunching.js
 # bus-alerts on even minutes, bus-pulse on odd minutes — same threading-
 # safety reasoning as train-alerts vs train-pulse. Bot accounts differ from

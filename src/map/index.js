@@ -9,4 +9,5 @@ module.exports = {
   ...require('./gapChart'),
   ...require('./disruption'),
   ...require('./bus/disruption'),
+  ...require('./crossBunching'),
 };

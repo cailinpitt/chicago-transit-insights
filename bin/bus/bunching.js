@@ -65,6 +65,12 @@ async function main() {
     return;
   }
 
+  // Vehicles already covered by a recently-posted cross-route pileup (the
+  // cross-bunching bin runs just before this one). A per-route candidate that
+  // is mostly the same buses is the same physical pileup — the multi-route post
+  // is the better story, so suppress this one. See src/bus/crossBunching.js.
+  const crossClaimed = argv['dry-run'] ? new Set() : history.recentCrossBunchMemberIds();
+
   console.log(`Found ${bunches.length} candidate bunch(es); picking best available:`);
   for (const b of bunches) {
     console.log(
@@ -115,6 +121,35 @@ async function main() {
             : `within ${Math.round(terminalZoneFt)}ft of end terminal`;
       console.log(`  skip pid ${candidate.pid}: ${reason}`);
       continue;
+    }
+
+    // Suppress when a cross-route pileup already covered ≥2 of these buses.
+    if (!argv['dry-run']) {
+      const overlap = candidate.vehicles.filter((v) => crossClaimed.has(String(v.vid))).length;
+      if (overlap >= 2) {
+        console.log(
+          `  skip pid ${candidate.pid}: ${overlap} buses already covered by a cross-route pileup`,
+        );
+        history.recordBunching({
+          kind: 'bus',
+          route: candidate.route,
+          direction: candidate.pid,
+          vehicleCount: candidate.vehicles.length,
+          severityFt: candidate.spanFt,
+          nearStop: stop.stopName,
+          posted: false,
+        });
+        history.recordMetaSignal({
+          kind: 'bus',
+          line: candidate.route,
+          direction: candidate.pid,
+          source: 'bunching',
+          severity: Math.min(1, candidate.vehicles.length / 4),
+          detail: { vehicles: candidate.vehicles.length, suppressed: 'cross-route' },
+          posted: false,
+        });
+        continue;
+      }
     }
 
     // Route-level cooldown stops opposite-direction pids from posting minutes apart.

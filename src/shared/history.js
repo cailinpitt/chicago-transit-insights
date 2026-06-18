@@ -25,7 +25,8 @@ function db() {
       severity_ft INTEGER NOT NULL,
       near_stop TEXT,
       posted INTEGER NOT NULL DEFAULT 0,
-      post_uri TEXT
+      post_uri TEXT,
+      member_ids TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_bunching_kind_route_ts
       ON bunching_events(kind, route, ts);
@@ -267,6 +268,15 @@ function db() {
     .map((c) => c.name);
   if (!cooldownCols.includes('expires_at')) {
     _db.exec('ALTER TABLE cooldowns ADD COLUMN expires_at INTEGER');
+  }
+  // member_ids = JSON array of the vehicle/run ids in a cross-route bunch,
+  // used to suppress the per-route post for the same pileup (see crossBunching).
+  const bunchingCols = _db
+    .prepare('PRAGMA table_info(bunching_events)')
+    .all()
+    .map((c) => c.name);
+  if (!bunchingCols.includes('member_ids')) {
+    _db.exec('ALTER TABLE bunching_events ADD COLUMN member_ids TEXT');
   }
   const obsCols = _db
     .prepare('PRAGMA table_info(observations)')
@@ -1307,14 +1317,14 @@ function chicagoStartOfDay(ts) {
 }
 
 function recordBunching(
-  { kind, route, direction, vehicleCount, severityFt, nearStop, posted, postUri },
+  { kind, route, direction, vehicleCount, severityFt, nearStop, posted, postUri, memberIds },
   now = Date.now(),
 ) {
   db()
     .prepare(`
     INSERT INTO bunching_events
-      (ts, kind, route, direction, vehicle_count, severity_ft, near_stop, posted, post_uri)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (ts, kind, route, direction, vehicle_count, severity_ft, near_stop, posted, post_uri, member_ids)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `)
     .run(
       now,
@@ -1326,7 +1336,29 @@ function recordBunching(
       nearStop || null,
       posted ? 1 : 0,
       postUri || null,
+      memberIds && memberIds.length ? JSON.stringify(memberIds.map(String)) : null,
     );
+}
+
+// The vehicle/run ids in cross-route bunches (`kind` ending in `-multi`) posted
+// within `withinMs`. The per-route bunching bins consult this to suppress the
+// per-route post for a pileup the cross-route bin already covered.
+function recentCrossBunchMemberIds({ withinMs = 10 * 60 * 1000 } = {}, now = Date.now()) {
+  const rows = db()
+    .prepare(`
+      SELECT member_ids FROM bunching_events
+      WHERE kind LIKE '%-multi' AND posted = 1 AND member_ids IS NOT NULL AND ts >= ?
+    `)
+    .all(now - withinMs);
+  const ids = new Set();
+  for (const row of rows) {
+    try {
+      for (const id of JSON.parse(row.member_ids)) ids.add(String(id));
+    } catch {
+      // tolerate a malformed row rather than crash the bin
+    }
+  }
+  return ids;
 }
 
 function recordSpeedmap(
@@ -1880,6 +1912,7 @@ function findRelatedAnalyticsPosts({ kind, routes, sinceTs, untilTs, excludeSour
 module.exports = {
   rolloffOld,
   recordBunching,
+  recentCrossBunchMemberIds,
   recordSpeedmap,
   recordGap,
   bunchingCallouts,

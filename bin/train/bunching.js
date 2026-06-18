@@ -49,6 +49,11 @@ async function main() {
     );
   }
 
+  // Trains already covered by a recently-posted cross-line pileup (the
+  // cross-bunching bin runs just before this one). A per-line candidate that is
+  // mostly the same trains is the same physical pileup — suppress this one.
+  const crossClaimed = argv['dry-run'] ? new Set() : history.recentCrossBunchMemberIds();
+
   // Two cooldown layers: line+direction (specific) and line-wide (prevents
   // opposite-direction posts within the hour). Mirrors bus pid + route cooldowns.
   let bunch = null;
@@ -61,6 +66,22 @@ async function main() {
     const candDirKey = `train_${candidate.line}_${candidate.trDr}`;
     const candLineKey = `train_line_${candidate.line}`;
     if (!argv['dry-run']) {
+      const overlap = candidate.trains.filter((t) => crossClaimed.has(String(t.rn))).length;
+      if (overlap >= 2) {
+        console.log(
+          `  skip ${LINE_NAMES[candidate.line]} ${candidate.trDr}: ${overlap} trains already covered by a cross-line pileup`,
+        );
+        history.recordBunching({
+          kind: 'train',
+          route: candidate.line,
+          direction: candidate.trDr,
+          vehicleCount: candidate.trains.length,
+          severityFt: candidate.spanFt,
+          nearStop: candidate.trains[0].nextStation,
+          posted: false,
+        });
+        continue;
+      }
       const dirCd = isOnCooldown(candDirKey);
       const lineCd = isOnCooldown(candLineKey);
       // Both direction and line cooldown allow strictly-more-severe
