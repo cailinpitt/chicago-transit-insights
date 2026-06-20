@@ -1,10 +1,15 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { postQuote, getPostRecord, resolveReplyRef } = require('../../src/shared/bluesky');
+const {
+  postQuote,
+  postTextWithLinkCard,
+  getPostRecord,
+  resolveReplyRef,
+} = require('../../src/shared/bluesky');
 
 function makeAgent({ getRecord, post } = {}) {
-  const calls = { getRecord: [], post: [] };
+  const calls = { getRecord: [], post: [], uploadBlob: [] };
   return {
     calls,
     com: {
@@ -18,6 +23,10 @@ function makeAgent({ getRecord, post } = {}) {
         },
       },
     },
+    uploadBlob: async (buf, options) => {
+      calls.uploadBlob.push({ buf, options });
+      return { data: { blob: { ref: 'uploaded-thumb' } } };
+    },
     post: async (params) => {
       calls.post.push(params);
       if (typeof post === 'function') return post(params);
@@ -28,6 +37,38 @@ function makeAgent({ getRecord, post } = {}) {
     },
   };
 }
+
+test('postTextWithLinkCard falls back to the site image when the event image is not ready', async () => {
+  const originalFetch = global.fetch;
+  const fetched = [];
+  global.fetch = async (url) => {
+    fetched.push(url);
+    if (url.includes('/event/')) return { ok: false };
+    return {
+      ok: true,
+      headers: { get: () => 'image/png' },
+      arrayBuffer: async () => Uint8Array.from([1, 2, 3]).buffer,
+    };
+  };
+  try {
+    const agent = makeAgent();
+    await postTextWithLinkCard(agent, 'resolved', null, {
+      url: 'https://chicagotransitalerts.app/event/root/resolved',
+      title: 'Resolved',
+      description: 'Archive',
+      thumbUrl: 'https://chicagotransitalerts.app/event/root/resolved/og.png',
+      fallbackThumbUrl: 'https://chicagotransitalerts.app/og-image.png',
+    });
+    assert.deepEqual(fetched, [
+      'https://chicagotransitalerts.app/event/root/resolved/og.png',
+      'https://chicagotransitalerts.app/og-image.png',
+    ]);
+    assert.equal(agent.calls.uploadBlob.length, 1);
+    assert.deepEqual(agent.calls.post[0].embed.external.thumb, { ref: 'uploaded-thumb' });
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
 
 test('postQuote builds correct embed and returns expected shape', async () => {
   const agent = makeAgent();

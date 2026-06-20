@@ -480,7 +480,11 @@ function buildIncidents(builtAlerts, builtObservations) {
     return o;
   });
 
-  const usedObsIds = new Set();
+  // `disruption_events` and `roundup_anchors` have independent integer primary
+  // keys, so their ids can collide. Track the normalized observation objects
+  // themselves; using bare ids here silently dropped whichever record from the
+  // other table happened to share an id.
+  const usedObservations = new Set();
   const incidents = [];
 
   for (const alert of alerts) {
@@ -495,7 +499,7 @@ function buildIncidents(builtAlerts, builtObservations) {
     const isPlannedMetra = alert.kind === 'metra' && statusBlock(alert)?.type === 'planned-delay';
     for (const obs of observations) {
       if (isPlannedMetra) break;
-      if (usedObsIds.has(obs.id)) continue;
+      if (usedObservations.has(obs)) continue;
       if (alert.kind !== obs.kind) continue;
       if (!alert.routes.includes(obs.line)) continue;
       // Anchor on first_seen_ts; require real interval overlap (with grace) so
@@ -563,12 +567,12 @@ function buildIncidents(builtAlerts, builtObservations) {
       detections: matches.map(detectionBlock),
       status: statusBlock(alert),
     });
-    for (const o of matches) usedObsIds.add(o.id);
+    for (const o of matches) usedObservations.add(o);
   }
 
   // Bot observations with no matching CTA alert.
   for (const obs of observations) {
-    if (usedObsIds.has(obs.id)) continue;
+    if (usedObservations.has(obs)) continue;
     incidents.push({
       id: postUrlRkey(obs.post_url) ?? String(obs.id),
       agency: agencyForKind(obs.kind),

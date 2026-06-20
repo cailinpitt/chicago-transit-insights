@@ -167,6 +167,12 @@ Each posted alert's `(alert_id, post_uri, kind, headline, routes)` row is writte
    - If it's missing, increment the counter.
 3. Once the counter hits `ALERT_CLEAR_TICKS` consecutive misses, post a threaded `✅ CTA has cleared: <headline>` reply to the original post.
 
+Resolution replies include an explicit archive link card. The posting helper
+prefers the event-specific `/event/<rkey>/resolved/og.png`, then uploads the
+site-wide OG image if the event prerender has not landed yet. The web exporter
+also treats `disruption_events` and `roundup_anchors` as separate ID namespaces;
+their independent integer primary keys must never deduplicate each other.
+
 The multi-tick threshold protects against feed flicker — the CTA endpoint occasionally returns a brief empty response. There's also a guard at the top of the resolution sweep: if the *whole* fetch returned zero alerts (likely a feed glitch, not "everything's fixed at once"), the sweep is skipped entirely.
 
 ## The technical version — pulse detection

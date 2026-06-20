@@ -434,6 +434,20 @@ test('multiple matching observations ride along, primary (closest) first', () =>
   assert.equal(incidents[0].detections[0].id, 1, 'closest obs is primary');
 });
 
+test('observations from independent tables are not deduped by colliding numeric ids', () => {
+  const matchedPulse = obs({ id: 399, line: 'red', post_url: url('pulse399') });
+  const blueRoundup = obs({
+    id: 399,
+    line: 'blue',
+    detection_source: 'roundup',
+    signals: ['ghost', 'gap'],
+    post_url: url('roundup399'),
+  });
+  const incidents = buildIncidents([alert({ routes: ['red'] })], [matchedPulse, blueRoundup]);
+  assert.equal(incidents.length, 2);
+  assert.ok(incidents.some((incident) => incident.id === 'roundup399'));
+});
+
 test('active incident reports no resolution even if a paired obs resolved', () => {
   const resolvedObs = obs({ resolved_ts: NOW + 10 * 60_000, active: false });
   const incidents = buildIncidents([alert({ active: true, resolved_ts: null })], [resolvedObs]);

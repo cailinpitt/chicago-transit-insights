@@ -28,6 +28,7 @@ function resolvedEventLink(postUri, title) {
     title: title || 'Chicago Transit Alerts',
     description: 'View this incident on the Chicago Transit Alerts archive.',
     thumbUrl: `${url}/og.png`,
+    fallbackThumbUrl: 'https://chicagotransitalerts.app/og-image.png',
   };
 }
 
