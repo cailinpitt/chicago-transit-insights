@@ -8,7 +8,16 @@ const ASSETS_DIR = Path.join(__dirname, '..', '..', 'assets');
 
 function setup() {
   pruneOldAssets();
-  history.rolloffOld();
+  // Best-effort housekeeping (dropping expired cooldowns / stale meta-signals).
+  // A transient "database is locked" from a concurrent writer must NOT abort the
+  // detection+post tick that follows — detection is read-only and unaffected,
+  // and missing one tick's cleanup is harmless (the next bin's setup catches
+  // up). Swallow the residual lock (busy_timeout already retried) so we proceed.
+  try {
+    history.rolloffOld();
+  } catch (e) {
+    console.warn(`setup: history.rolloffOld skipped (${e.message})`);
+  }
 }
 
 function writeDryRunAsset(buffer, filename) {

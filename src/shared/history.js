@@ -14,6 +14,12 @@ function db() {
   Fs.ensureDirSync(Path.dirname(DB_PATH));
   _db = new Database(DB_PATH);
   _db.pragma('journal_mode = WAL');
+  // Many crons (the observers every minute, the pulse + bunching/gap/ghost
+  // detectors) hammer this one file concurrently. WAL lets readers run during a
+  // write, but only one writer at a time — so a write can still hit SQLITE_BUSY
+  // ("database is locked") when another process holds the write lock. Wait up to
+  // 15s for it instead of failing the tick outright (default is 5s).
+  _db.pragma('busy_timeout = 15000');
   _db.exec(`
     CREATE TABLE IF NOT EXISTS bunching_events (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
