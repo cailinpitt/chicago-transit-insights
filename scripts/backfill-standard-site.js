@@ -13,14 +13,15 @@
 // local path or URL to override the default data origin.
 //
 // Records are repo writes (com.atproto.repo.putRecord), NOT Bluesky posts —
-// nothing is published to a timeline. Still gated: run it deliberately.
+// nothing is published to a timeline.
+//
+// push-web-data.sh runs this every tick against the freshly-exported
+// tmp/web-data/alerts.json (so the manifest it builds next is complete); it's
+// also safe to run by hand for an immediate reconcile or first mint:
 //
 //   node scripts/backfill-standard-site.js --dry-run            # show changes
 //   node scripts/backfill-standard-site.js                      # publish
 //   node scripts/backfill-standard-site.js /path/to/alerts.json # local source
-//
-// After a real run, publish the manifest so the site picks up the new tags:
-//   node bin/export-standard-site.js <out>   (or run push-web-data.sh)
 
 require('../src/shared/env');
 

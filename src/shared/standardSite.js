@@ -138,7 +138,14 @@ async function ensureDocument(agent, { rkey, title, description, publishedAt, up
 
 function toIso(value) {
   if (value == null) return new Date().toISOString();
-  if (typeof value === 'number') return new Date(value).toISOString();
+  if (typeof value === 'number') {
+    // Our epoch fields are a mix of ms (first_seen_ts) and seconds (GTFS-rt
+    // onset_ts/resolved_ts). Any real ms timestamp is > 1e12 (post-2001), and any
+    // seconds timestamp for the next few centuries is < 1e12, so a value below
+    // the threshold is seconds and needs ×1000 — otherwise it lands in 1970.
+    const ms = value < 1e12 ? value * 1000 : value;
+    return new Date(ms).toISOString();
+  }
   return new Date(value).toISOString();
 }
 

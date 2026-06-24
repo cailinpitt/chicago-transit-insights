@@ -22,6 +22,12 @@ Both are used; they're independent.
    page/path match. Wired via `src/shared/bluesky.js#postTextWithLinkCard` (new
    5th arg) and `src/shared/standardSite.js#eventAssociatedRefsForLink`.
 
+   Note this only works on **resolution replies**: a document's rkey *is* the
+   event's Bluesky post rkey, which isn't known until after the post lands, so a
+   post can't attach refs to its own not-yet-created document. Initial posts are
+   covered by the page-side path instead (the document is minted right after, by
+   the sync below).
+
 2. **Page-side (`<link>` tags + well-known).** Each canonical `/event/<id>` page
    declares its document record; the home page + every page declare the
    publication; and `/.well-known/site.standard.publication` returns the
@@ -67,22 +73,27 @@ needless rebuild. The frontend reads it at build time.
 
 ## Operations
 
-1. **Mint + backfill (one-time, then periodic reconcile).** On the server:
+1. **Continuous sync (automatic).** `bin/push-web-data.sh` runs
+   `scripts/backfill-standard-site.js` against the freshly-exported
+   `tmp/web-data/alerts.json` on every tick, *before* it builds the manifest — so
+   every incident with an `/event` page gets a document (keyed by its event rkey)
+   and the page-side tags stay complete, not just the narrow slice the live
+   posting bins can mint. It ensures the publication record, then puts a document
+   per incident. Idempotent: only new/changed records hit the network, and the
+   step is non-fatal so a Bluesky hiccup never blocks the data push. These are
+   repo writes (`com.atproto.repo.putRecord`), **not** timeline posts.
+
+   Run it by hand for an immediate reconcile or the first mint:
 
    ```sh
    node scripts/backfill-standard-site.js --dry-run   # preview
    node scripts/backfill-standard-site.js             # ensure publication + all docs
    ```
 
-   It reads the published `alerts.json` (so manifest keys match the deployed
-   site), ensures the publication record, and publishes a document for every
-   incident that has an `/event` page. Idempotent — safe to re-run on a cadence to
-   pick up bot-only events and enrich the minimal records the live path creates.
-   These are repo writes (`com.atproto.repo.putRecord`), **not** timeline posts.
-
-2. **Publish the manifest.** `bin/push-web-data.sh` regenerates and uploads
-   `standard-site.json` on every run; or run `bin/export-standard-site.js <out>`
-   directly. After that, the next site build injects the tags + well-known.
+2. **Publish the manifest.** The same `push-web-data.sh` run regenerates and
+   uploads `standard-site.json` right after the sync; or run
+   `bin/export-standard-site.js <out>` directly. After that, the next site build
+   injects the tags + well-known.
 
 The state path defaults under `state/` (override with `STANDARD_SITE_STATE`).
 Uses the existing ALERTS-account Bluesky credentials.
