@@ -37,6 +37,7 @@ const {
   resolveReplyRef,
 } = require('../../src/metra/bluesky');
 const { resolvedEventLink } = require('../../src/shared/eventLink');
+const { eventAssociatedRefsForLink } = require('../../src/shared/standardSite');
 const {
   getAlertPost,
   recordAlertSeen,
@@ -77,6 +78,7 @@ const io = {
   postText,
   postTextWithLinkCard,
   resolveReplyRef,
+  eventAssociatedRefsForLink,
 };
 
 // Comma-joined route_ids the alert touches (empty for agency-wide notices) —
@@ -204,8 +206,9 @@ async function postResolution(alertRow, agentGetter) {
       alertRow.post_uri,
       buildMetraResolutionCardTitle(alertRow.headline),
     );
+    const associatedRefs = link ? await io.eventAssociatedRefsForLink(agent, link) : null;
     const result = link
-      ? await io.postTextWithLinkCard(agent, text, replyRef, link)
+      ? await io.postTextWithLinkCard(agent, text, replyRef, link, associatedRefs)
       : await io.postText(agent, text, replyRef);
     console.log(`Posted metra resolution for alert ${alertRow.alert_id}: ${result.url}`);
     recordAlertResolved({ alertId: alertRow.alert_id, replyUri: result.uri });
@@ -237,8 +240,9 @@ async function postCancellationClose(alertRow, agentGetter) {
     // Link the neutral close note to the incident's archive page, like the
     // feed-drop resolution reply — but with a neutral card title (no "resolved").
     const link = resolvedEventLink(alertRow.post_uri, buildMetraCloseCardTitle(alertRow.headline));
+    const associatedRefs = link ? await io.eventAssociatedRefsForLink(agent, link) : null;
     const result = link
-      ? await io.postTextWithLinkCard(agent, text, replyRef, link)
+      ? await io.postTextWithLinkCard(agent, text, replyRef, link, associatedRefs)
       : await io.postText(agent, text, replyRef);
     console.log(`Posted metra cancellation close for alert ${alertRow.alert_id}: ${result.url}`);
     finalizeCancellation({ alertId: alertRow.alert_id, replyUri: result.uri });
@@ -290,8 +294,9 @@ async function postDelayClose(alertRow, agentGetter) {
     // Link the neutral close note to the incident's archive page, like the
     // feed-drop resolution reply — but with a neutral card title (no "resolved").
     const link = resolvedEventLink(alertRow.post_uri, buildMetraCloseCardTitle(alertRow.headline));
+    const associatedRefs = link ? await io.eventAssociatedRefsForLink(agent, link) : null;
     const result = link
-      ? await io.postTextWithLinkCard(agent, text, replyRef, link)
+      ? await io.postTextWithLinkCard(agent, text, replyRef, link, associatedRefs)
       : await io.postText(agent, text, replyRef);
     console.log(`Posted metra delay close for alert ${alertRow.alert_id}: ${result.url}`);
     finalizeDelay({ alertId: alertRow.alert_id, replyUri: result.uri });

@@ -21,6 +21,7 @@ const {
   resolveReplyRef,
 } = require('../../src/shared/bluesky');
 const { resolvedEventLink } = require('../../src/shared/eventLink');
+const { eventAssociatedRefsForLink } = require('../../src/shared/standardSite');
 const {
   buildAlertPostText,
   buildAlertAltText,
@@ -253,8 +254,9 @@ async function postResolution(alertRow, agentGetter) {
       alertRow.post_uri,
       buildResolutionReplyCardTitle({ alert: pseudoAlert }),
     );
+    const associatedRefs = link ? await eventAssociatedRefsForLink(agent, link) : null;
     const result = link
-      ? await postTextWithLinkCard(agent, text, replyRef, link)
+      ? await postTextWithLinkCard(agent, text, replyRef, link, associatedRefs)
       : await postText(agent, text, replyRef);
     console.log(`Posted resolution for alert ${alertRow.alert_id}: ${result.url}`);
     recordAlertResolved({ alertId: alertRow.alert_id, replyUri: result.uri });
