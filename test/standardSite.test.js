@@ -68,6 +68,23 @@ test('ensureDocument keys by event rkey and sets a matching path', async () => {
   assert.equal(write.record.site, publicationUri(DID));
 });
 
+test('ensureDocument is skip-on-existence: changed content does NOT re-put (stable cid)', async () => {
+  const agent = fakeAgent();
+  await ensurePublication(agent);
+  const first = await ensureDocument(agent, { rkey: 'stable1', title: 'Original', publishedAt: 0 });
+  const writes = agent.writes.length;
+  // A later run with a richer title must NOT re-put — re-putting would change the
+  // cid and break associatedRefs already embedded in posted cards.
+  const again = await ensureDocument(agent, {
+    rkey: 'stable1',
+    title: 'A much richer headline',
+    description: 'now with detail',
+    publishedAt: 123,
+  });
+  assert.equal(agent.writes.length, writes); // no new network write
+  assert.equal(again.cid, first.cid); // cid unchanged
+});
+
 test('ensureDocument normalizes a seconds-epoch publishedAt to ms (no 1970)', async () => {
   const agent = fakeAgent();
   await ensurePublication(agent);

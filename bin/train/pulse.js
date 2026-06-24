@@ -48,6 +48,7 @@ const {
   resolveReplyRef,
 } = require('../../src/shared/bluesky');
 const { resolvedEventLink } = require('../../src/shared/eventLink');
+const { eventAssociatedRefsForLink } = require('../../src/shared/standardSite');
 const { renderDisruption } = require('../../src/map');
 const {
   buildPostText,
@@ -456,8 +457,11 @@ async function postClearReply(line, direction, prior, agentGetter) {
   // Card title is a trimmed one-liner (no emoji / CTA clause / station
   // line-qualifiers); the post body (`text`) keeps the full framing.
   const link = resolvedEventLink(prior.active_post_uri, buildClearCardTitle(disruption));
+  // Mint the event's standard.site document + attach associatedRefs so the clear
+  // card renders enhanced immediately, instead of waiting on the page-side rebuild.
+  const associatedRefs = link ? await eventAssociatedRefsForLink(agent, link) : null;
   const result = link
-    ? await postTextWithLinkCard(agent, text, replyRef, link)
+    ? await postTextWithLinkCard(agent, text, replyRef, link, associatedRefs)
     : await postText(agent, text, replyRef);
   console.log(`Posted pulse clear ${lineLabel(line)}/${direction}: ${result.url}`);
   // Backdate to real recovery: the first dir-matched train observed inside

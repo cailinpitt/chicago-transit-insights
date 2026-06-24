@@ -79,7 +79,9 @@ needless rebuild. The frontend reads it at build time.
    every incident with an `/event` page gets a document (keyed by its event rkey)
    and the page-side tags stay complete, not just the narrow slice the live
    posting bins can mint. It ensures the publication record, then puts a document
-   per incident. Idempotent: only new/changed records hit the network, and the
+   per incident. Idempotent (skip-on-existence): only records missing for an rkey
+   hit the network — existing docs are never re-put, so their cids stay stable and
+   any `associatedRefs` already embedded in posted cards keep verifying. The
    step is non-fatal so a Bluesky hiccup never blocks the data push. These are
    repo writes (`com.atproto.repo.putRecord`), **not** timeline posts.
 

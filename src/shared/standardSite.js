@@ -114,6 +114,17 @@ async function ensurePublication(agent) {
 async function ensureDocument(agent, { rkey, title, description, publishedAt, updatedAt }) {
   if (!rkey) throw new Error('standardSite.ensureDocument: rkey is required');
   const did = agentDid(agent);
+  const state = loadState();
+  const cached = state.documents?.[rkey];
+  // Skip-on-existence, NOT content-hash. Once a document exists for this rkey on
+  // this account, never re-put it: standard.site verification is path-based, so
+  // its title/description never need updating — and re-putting would change the
+  // record's cid, invalidating the `associatedRefs` strong refs already embedded
+  // in posted cards (a post can't be edited after the fact). A DID change still
+  // re-puts, so an account migration heals.
+  if (cached && cached.did === did && cached.cid) {
+    return { uri: documentUri(did, rkey), cid: cached.cid };
+  }
   const record = {
     $type: DOCUMENT_COLLECTION,
     site: publicationUri(did),
@@ -123,15 +134,9 @@ async function ensureDocument(agent, { rkey, title, description, publishedAt, up
     ...(description ? { description: String(description) } : {}),
     ...(updatedAt ? { updatedAt: toIso(updatedAt) } : {}),
   };
-  const hash = hashRecord(record);
-  const state = loadState();
-  const cached = state.documents?.[rkey];
-  if (cached && cached.did === did && cached.hash === hash && cached.cid) {
-    return { uri: documentUri(did, rkey), cid: cached.cid };
-  }
   const { uri, cid } = await putRecord(agent, DOCUMENT_COLLECTION, rkey, record);
   if (!state.documents) state.documents = {};
-  state.documents[rkey] = { did, cid, hash };
+  state.documents[rkey] = { did, cid, hash: hashRecord(record) };
   saveState(state);
   return { uri, cid };
 }

@@ -26,6 +26,7 @@ const {
   resolveReplyRef,
 } = require('../../src/shared/bluesky');
 const { resolvedEventLink } = require('../../src/shared/eventLink');
+const { eventAssociatedRefsForLink } = require('../../src/shared/standardSite');
 const { renderBusDisruptionRich } = require('../../src/map');
 const {
   buildBusPostText,
@@ -373,8 +374,11 @@ async function postClearReply(route, prior, agentGetter) {
     return;
   }
   const link = resolvedEventLink(prior.active_post_uri, buildBusClearCardTitle({ route, name }));
+  // Mint the event's standard.site document + attach associatedRefs so the clear
+  // card renders enhanced immediately, instead of waiting on the page-side rebuild.
+  const associatedRefs = link ? await eventAssociatedRefsForLink(agent, link) : null;
   const result = link
-    ? await postTextWithLinkCard(agent, text, replyRef, link)
+    ? await postTextWithLinkCard(agent, text, replyRef, link, associatedRefs)
     : await postText(agent, text, replyRef);
   console.log(`Posted bus pulse clear ${route}: ${result.url}`);
   // Backdate to real recovery. For the blackout variant (no affected_pid)
