@@ -22,7 +22,8 @@ function slugifyStation(name) {
 function normalizeStationKey(s) {
   return String(s)
     .toLowerCase()
-    .replace(/\s*\/\s*/g, '/')
+    .replace(/\./g, '')
+    .replace(/\s*\/\s*/g, ' ')
     .replace(/[\s-]+/g, ' ')
     .replace(/\s*\bstation\b\s*$/i, '')
     .trim();

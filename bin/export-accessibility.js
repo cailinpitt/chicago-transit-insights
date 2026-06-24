@@ -6,6 +6,7 @@ const Path = require('node:path');
 const { ACCESSIBILITY_ROLLOFF_MS, getAccessibilityOutages } = require('../src/shared/history');
 
 const WINDOW_DAYS = Math.round(ACCESSIBILITY_ROLLOFF_MS / (24 * 60 * 60 * 1000));
+const ACCESSIBILITY_DATA_START_TS = Date.parse('2026-06-23T12:00:00Z');
 
 function outageBlock(row, now) {
   const active = row.active && row.restoredTs == null;
@@ -36,7 +37,10 @@ function outageBlock(row, now) {
 }
 
 function buildAccessibilityPayload({ now = Date.now() } = {}) {
-  const dataStartTs = now - ACCESSIBILITY_ROLLOFF_MS;
+  const dataStartTs = Math.min(
+    now,
+    Math.max(now - ACCESSIBILITY_ROLLOFF_MS, ACCESSIBILITY_DATA_START_TS),
+  );
   const outages = getAccessibilityOutages(dataStartTs).map((row) => outageBlock(row, now));
   return {
     schema_version: 1,
@@ -59,4 +63,4 @@ if (require.main === module) {
   main();
 }
 
-module.exports = { buildAccessibilityPayload, outageBlock };
+module.exports = { ACCESSIBILITY_DATA_START_TS, buildAccessibilityPayload, outageBlock };

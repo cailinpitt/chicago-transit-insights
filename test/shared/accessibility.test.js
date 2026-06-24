@@ -98,6 +98,19 @@ test('Metra accessibility gate captures ADA notices that the timeline rejects', 
   assert.equal(row.unitLabel, 'near the Great Hall');
 });
 
+test('accessibility parser matches dotted station abbreviations', () => {
+  const alert = {
+    id: 'metra-alert-2',
+    header: 'Elevator outage at 115th St./Morgan Park',
+    description: 'Elevator at 115th St./Morgan Park station is out of service.',
+    effect: 'UNKNOWN_EFFECT',
+    informedEntities: [{ routeId: 'ME' }],
+  };
+  const [row] = toMetraOutageRows([alert], 5000);
+  assert.equal(row.stationName, '115th St. - Morgan Park');
+  assert.equal(row.stationSlug, '115th-st-morgan-park');
+});
+
 test('accessibility storage reconciles and export emits public shape', () => {
   const { history, exportAccessibility, cleanup } = loadHistoryWithDb();
   try {
@@ -143,6 +156,18 @@ test('accessibility storage reconciles and export emits public shape', () => {
     assert.equal(payload.outages[0].id, 'cta-1');
     assert.equal(payload.outages[0].station.slug, 'belmont');
     assert.equal(payload.outages[0].lifecycle.active, true);
+  } finally {
+    cleanup();
+  }
+});
+
+test('accessibility export reports archive launch date before retention cutoff', () => {
+  const { exportAccessibility, cleanup } = loadHistoryWithDb();
+  try {
+    const payload = exportAccessibility.buildAccessibilityPayload({
+      now: Date.parse('2026-06-24T12:00:00Z'),
+    });
+    assert.equal(payload.data_start_ts, Date.parse('2026-06-23T12:00:00Z'));
   } finally {
     cleanup();
   }

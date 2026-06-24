@@ -52,6 +52,8 @@ Rows live in `accessibility_outages` in the shared SQLite DB initialized by
 row.
 
 Restored outages are retained for 180 days. Active outages are never rolled off.
+The public archive starts on June 23, 2026; until retention catches up, exports
+report that launch date rather than a synthetic 180-day lookback date.
 
 ## Export
 
@@ -61,7 +63,7 @@ Restored outages are retained for 180 days. Active outages are never rolled off.
 {
   "schema_version": 1,
   "generated_at": 1781920688280,
-  "data_start_ts": 1781458745342,
+  "data_start_ts": 1782216000000,
   "window_days": 180,
   "outages": []
 }
