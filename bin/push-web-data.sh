@@ -119,6 +119,34 @@ if [ -z "$GITHUB_DISPATCH_TOKEN" ]; then
 elif [ "$((now_s - last_s))" -lt "$DEBOUNCE" ]; then
   echo "push-web-data: last rebuild $((now_s - last_s))s ago (< ${DEBOUNCE}s); debouncing dispatch"
 else
+  active_run=""
+  for status in queued in_progress waiting pending requested; do
+    runs_json=$(curl -fsS \
+      -H "Authorization: Bearer $GITHUB_DISPATCH_TOKEN" \
+      -H "Accept: application/vnd.github+json" \
+      -H "X-GitHub-Api-Version: 2022-11-28" \
+      "https://api.github.com/repos/$DISPATCH_REPO/actions/workflows/deploy.yml/runs?status=$status&per_page=1") \
+      || runs_json=""
+    active_run=$(printf '%s' "$runs_json" | node -e '
+      let body = "";
+      process.stdin.on("data", (chunk) => (body += chunk));
+      process.stdin.on("end", () => {
+        try {
+          const run = JSON.parse(body).workflow_runs?.[0];
+          if (run) console.log(`${run.id} ${run.status} ${run.event}`);
+        } catch (_) {}
+      });
+    ')
+    if [ -n "$active_run" ]; then
+      break
+    fi
+  done
+
+  if [ -n "$active_run" ]; then
+    echo "push-web-data: deploy workflow already active ($active_run); skipping dispatch"
+    exit 0
+  fi
+
   code=$(curl -fsS -o /dev/null -w '%{http_code}' -X POST \
     -H "Authorization: Bearer $GITHUB_DISPATCH_TOKEN" \
     -H "Accept: application/vnd.github+json" \
