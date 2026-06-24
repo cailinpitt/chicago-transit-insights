@@ -6,6 +6,8 @@ const DB_PATH =
   process.env.HISTORY_DB_PATH || Path.join(__dirname, '..', '..', 'state', 'history.sqlite');
 const ROLLOFF_DAYS = 90;
 const DAY_MS = 24 * 60 * 60 * 1000;
+const ACCESSIBILITY_ROLLOFF_MS = 180 * DAY_MS;
+const ACCESSIBILITY_CLEAR_TICKS = 3;
 
 let _db = null;
 
@@ -258,6 +260,28 @@ function db() {
       ON metra_trip_updates(trip_id, ts);
     CREATE INDEX IF NOT EXISTS idx_metra_tu_route_ts
       ON metra_trip_updates(route, ts);
+
+    CREATE TABLE IF NOT EXISTS accessibility_outages (
+      source_id TEXT PRIMARY KEY,
+      agency TEXT NOT NULL,
+      station_name TEXT,
+      station_slug TEXT,
+      lines TEXT,
+      unit_type TEXT NOT NULL,
+      unit_label TEXT,
+      headline TEXT,
+      description TEXT,
+      source_url TEXT,
+      first_seen_ts INTEGER NOT NULL,
+      last_seen_ts INTEGER NOT NULL,
+      restored_ts INTEGER,
+      active INTEGER NOT NULL DEFAULT 1,
+      clear_ticks INTEGER NOT NULL DEFAULT 0,
+      clear_started_ts INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_accessibility_active ON accessibility_outages(active);
+    CREATE INDEX IF NOT EXISTS idx_accessibility_station ON accessibility_outages(station_slug);
+    CREATE INDEX IF NOT EXISTS idx_accessibility_last_seen ON accessibility_outages(last_seen_ts);
   `);
 
   // Column migrations for DBs that predate the current schema.
@@ -552,6 +576,123 @@ function rolloffOld(now = Date.now()) {
   db()
     .prepare('DELETE FROM metra_trip_updates WHERE ts < ?')
     .run(now - 7 * DAY_MS);
+  db()
+    .prepare('DELETE FROM accessibility_outages WHERE active = 0 AND restored_ts < ?')
+    .run(now - ACCESSIBILITY_ROLLOFF_MS);
+}
+
+const fin = (v) => (Number.isFinite(v) ? v : null);
+const str = (v) => (v != null ? String(v) : null);
+
+function upsertAccessibilityOutages(rows, now = Date.now()) {
+  if (!rows || rows.length === 0) return;
+  const stmt = db().prepare(`
+    INSERT INTO accessibility_outages
+      (source_id, agency, station_name, station_slug, lines, unit_type, unit_label,
+       headline, description, source_url, first_seen_ts, last_seen_ts, restored_ts,
+       active, clear_ticks, clear_started_ts)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 1, 0, NULL)
+    ON CONFLICT(source_id) DO UPDATE SET
+      agency = excluded.agency,
+      station_name = excluded.station_name,
+      station_slug = excluded.station_slug,
+      lines = excluded.lines,
+      unit_type = excluded.unit_type,
+      unit_label = excluded.unit_label,
+      headline = excluded.headline,
+      description = excluded.description,
+      source_url = excluded.source_url,
+      last_seen_ts = excluded.last_seen_ts,
+      restored_ts = NULL,
+      active = 1,
+      clear_ticks = 0,
+      clear_started_ts = NULL
+  `);
+  const tx = db().transaction((items) => {
+    for (const row of items) {
+      if (!row?.sourceId) continue;
+      stmt.run(
+        String(row.sourceId),
+        String(row.agency),
+        str(row.stationName),
+        str(row.stationSlug),
+        Array.isArray(row.lines) ? row.lines.join(',') : str(row.lines),
+        String(row.unitType || 'other'),
+        str(row.unitLabel),
+        str(row.headline),
+        str(row.description),
+        str(row.sourceUrl),
+        fin(row.firstSeenTs) ?? now,
+        now,
+      );
+    }
+  });
+  tx(rows);
+}
+
+function reconcileAccessibilityOutages(seenIds, now = Date.now()) {
+  const seen = new Set([...seenIds].map(String));
+  const rows = db()
+    .prepare(
+      'SELECT source_id AS sourceId, clear_ticks AS clearTicks FROM accessibility_outages WHERE active = 1',
+    )
+    .all();
+  const bump = db().prepare(`
+    UPDATE accessibility_outages
+    SET clear_ticks = clear_ticks + 1,
+        clear_started_ts = COALESCE(clear_started_ts, ?)
+    WHERE source_id = ?
+  `);
+  const restore = db().prepare(`
+    UPDATE accessibility_outages
+    SET active = 0,
+        restored_ts = COALESCE(clear_started_ts, ?),
+        clear_ticks = 0
+    WHERE source_id = ?
+  `);
+  const reset = db().prepare(`
+    UPDATE accessibility_outages
+    SET clear_ticks = 0,
+        clear_started_ts = NULL
+    WHERE source_id = ?
+  `);
+  const tx = db().transaction(() => {
+    for (const row of rows) {
+      if (seen.has(String(row.sourceId))) {
+        if (row.clearTicks > 0) reset.run(row.sourceId);
+        continue;
+      }
+      const next = (row.clearTicks || 0) + 1;
+      bump.run(now, row.sourceId);
+      if (next >= ACCESSIBILITY_CLEAR_TICKS) restore.run(now, row.sourceId);
+    }
+  });
+  tx();
+}
+
+function getAccessibilityOutages(sinceTs) {
+  return db()
+    .prepare(`
+      SELECT source_id AS sourceId, agency, station_name AS stationName,
+             station_slug AS stationSlug, lines, unit_type AS unitType,
+             unit_label AS unitLabel, headline, description, source_url AS sourceUrl,
+             first_seen_ts AS firstSeenTs, last_seen_ts AS lastSeenTs,
+             restored_ts AS restoredTs, active
+      FROM accessibility_outages
+      WHERE first_seen_ts >= ? OR restored_ts IS NULL OR restored_ts >= ?
+      ORDER BY first_seen_ts DESC
+    `)
+    .all(sinceTs, sinceTs)
+    .map((row) => ({
+      ...row,
+      lines: row.lines
+        ? String(row.lines)
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean)
+        : [],
+      active: row.active === 1,
+    }));
 }
 
 function getAlertPost(alertId) {
@@ -1938,6 +2079,9 @@ module.exports = {
   finalizeCancellation,
   recordDelay,
   finalizeDelay,
+  upsertAccessibilityOutages,
+  reconcileAccessibilityOutages,
+  getAccessibilityOutages,
   incrementAlertClearTicks,
   resetAlertClearTicks,
   listUnresolvedAlerts,
@@ -1950,6 +2094,8 @@ module.exports = {
   markRoundupResolved,
   recordGhostEvent,
   ALERT_CLEAR_TICKS,
+  ACCESSIBILITY_CLEAR_TICKS,
+  ACCESSIBILITY_ROLLOFF_MS,
   recordDisruption,
   getMetraRecordedTripIds,
   getMetraDisruptions,

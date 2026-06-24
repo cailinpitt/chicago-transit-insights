@@ -59,12 +59,13 @@ hc_ping start  # signal start for duration measurement
 
 # 1. Export current data into the working dir (readonly DB read, cron-safe).
 node "$CTA_INSIGHTS/bin/export-web.js" "$WORK/alerts.json"
+node "$CTA_INSIGHTS/bin/export-accessibility.js" "$WORK/accessibility.json"
 node "$CTA_INSIGHTS/bin/export-daily.js" "$WORK/daily-counts.json"
 node "$CTA_INSIGHTS/bin/export-csv.js" "$WORK/alerts.json" "$WORK/alerts.csv"
 
 # 2. Change detection: bail if all files match the last successful upload.
 changed=0
-for f in alerts.json daily-counts.json alerts.csv; do
+for f in alerts.json accessibility.json daily-counts.json alerts.csv; do
   if ! cmp -s "$WORK/$f" "$LAST/$f" 2>/dev/null; then
     changed=1
   fi
@@ -76,7 +77,7 @@ fi
 
 # 3. Upload to R2 with a short edge-cache TTL. The client also revalidates on
 #    generated_at, so 30s bounds worst-case staleness without hammering origin.
-for f in alerts.json daily-counts.json alerts.csv; do
+for f in alerts.json accessibility.json daily-counts.json alerts.csv; do
   rclone copyto "$WORK/$f" "$REMOTE/$f" \
     --s3-no-check-bucket \
     --header-upload "Cache-Control: public, max-age=30"
@@ -84,6 +85,7 @@ done
 
 # Record the new baseline only after a successful upload.
 cp "$WORK/alerts.json" "$LAST/alerts.json"
+cp "$WORK/accessibility.json" "$LAST/accessibility.json"
 cp "$WORK/daily-counts.json" "$LAST/daily-counts.json"
 cp "$WORK/alerts.csv" "$LAST/alerts.csv"
 echo "push-web-data: uploaded to $REMOTE"

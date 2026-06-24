@@ -30,6 +30,7 @@ R=/path/to/cta-insights/bin/cron-run.sh
 # the same trains (recentCrossBunchMemberIds, 10-min window).
 3-59/15 *  *  *  *   $R train-cross-bunching bin/train/cross-bunching.js
 1-59/2  *  *  *  *   $R train-alerts     bin/train/alerts.js
+1-59/2  *  *  *  *   $R accessibility    bin/accessibility.js
 7-59/15 *  *  *  *   $R train-gaps       bin/train/gaps.js
 0       */2 *  *  *  $R train-speedmap   bin/train/speedmap.js
 0       */3 *  *  *  $R train-snapshot   bin/train/snapshot.js
