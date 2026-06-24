@@ -214,13 +214,7 @@ async function postText(agent, text, replyRef = null) {
 // lazy URL scraping). Adds a richtext link facet over the URL so the text is
 // also clickable for clients that don't render the embed. Image fetch/upload
 // failures are swallowed — the post still goes out without a thumb.
-// `associatedRefs` (optional) is an array of com.atproto.repo.strongRef
-// (`{uri, cid}`) — the standard.site document + publication records for the
-// linked event. Bluesky reads them to render the *enhanced* link card. The
-// field is newer than the installed @atproto/api lexicon, so the client passes
-// it through unvalidated (unknown properties survive); see
-// src/shared/standardSite.js.
-async function postTextWithLinkCard(agent, text, replyRef, link, associatedRefs = null) {
+async function postTextWithLinkCard(agent, text, replyRef, link) {
   let thumb;
   for (const thumbUrl of [link.thumbUrl, link.fallbackThumbUrl].filter(Boolean)) {
     try {
@@ -261,7 +255,6 @@ async function postTextWithLinkCard(agent, text, replyRef, link, associatedRefs 
         title: link.title,
         description: link.description,
         ...(thumb && { thumb }),
-        ...(associatedRefs?.length ? { associatedRefs } : {}),
       },
     },
   });

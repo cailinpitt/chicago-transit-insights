@@ -15,7 +15,6 @@ bin/push-web-data.sh                          runtime: client fetch()s
   export-web.js   -> tmp/web-data/alerts.json     https://data.chicago…/alerts.json
   export-daily.js -> tmp/web-data/daily-counts     (VITE_DATA_BASE_URL, always fresh)
   export-csv.js   -> tmp/web-data/alerts.csv
-  export-standard-site.js -> standard-site.json    (standard.site manifest)
   cmp vs .last  ── unchanged? stop
         │ changed
         ├─ rclone copyto … r2web:cta-alert-history-data    build time: scripts/fetch-data.js

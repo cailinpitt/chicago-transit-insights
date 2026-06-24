@@ -62,21 +62,10 @@ node "$CTA_INSIGHTS/bin/export-web.js" "$WORK/alerts.json"
 node "$CTA_INSIGHTS/bin/export-accessibility.js" "$WORK/accessibility.json"
 node "$CTA_INSIGHTS/bin/export-daily.js" "$WORK/daily-counts.json"
 node "$CTA_INSIGHTS/bin/export-csv.js" "$WORK/alerts.json" "$WORK/alerts.csv"
-# Reconcile standard.site document records from the freshly-exported alerts.json
-# BEFORE building the manifest, so every posted incident gets a doc (keyed by its
-# event rkey) and the page-side enhanced-card tags stay complete — not just the
-# narrow slice the live posting bins can mint. Idempotent: only new/changed
-# records hit the network. Non-fatal: a Bluesky hiccup must not block the data
-# push; the manifest just lags one tick until the next run heals it.
-node "$CTA_INSIGHTS/scripts/backfill-standard-site.js" "$WORK/alerts.json" \
-  || echo "push-web-data: standard.site sync failed (manifest may lag); continuing"
-# standard.site manifest (AT-URIs for the enhanced-link-card tags + well-known);
-# sourced from local state, byte-stable when no records changed.
-node "$CTA_INSIGHTS/bin/export-standard-site.js" "$WORK/standard-site.json"
 
 # 2. Change detection: bail if all files match the last successful upload.
 changed=0
-for f in alerts.json accessibility.json daily-counts.json alerts.csv standard-site.json; do
+for f in alerts.json accessibility.json daily-counts.json alerts.csv; do
   if ! cmp -s "$WORK/$f" "$LAST/$f" 2>/dev/null; then
     changed=1
   fi
@@ -88,7 +77,7 @@ fi
 
 # 3. Upload to R2 with a short edge-cache TTL. The client also revalidates on
 #    generated_at, so 30s bounds worst-case staleness without hammering origin.
-for f in alerts.json accessibility.json daily-counts.json alerts.csv standard-site.json; do
+for f in alerts.json accessibility.json daily-counts.json alerts.csv; do
   rclone copyto "$WORK/$f" "$REMOTE/$f" \
     --s3-no-check-bucket \
     --header-upload "Cache-Control: public, max-age=30"
@@ -99,10 +88,9 @@ cp "$WORK/alerts.json" "$LAST/alerts.json"
 cp "$WORK/accessibility.json" "$LAST/accessibility.json"
 cp "$WORK/daily-counts.json" "$LAST/daily-counts.json"
 cp "$WORK/alerts.csv" "$LAST/alerts.csv"
-cp "$WORK/standard-site.json" "$LAST/standard-site.json"
 echo "push-web-data: uploaded to $REMOTE"
 
-# 4. Trigger a rebuild so prerendered OG cards / standard.site tags pick up new
+# 4. Trigger a rebuild so prerendered OG cards pick up new
 # incidents — debounced. alerts.json changes almost every tick, so an unthrottled
 # dispatch fires a Pages deploy every 1-2 min, faster than Pages rolls them out,
 # which wedges the public site on a stale build. The R2 upload above already ran

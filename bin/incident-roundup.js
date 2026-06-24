@@ -31,7 +31,6 @@ const {
 } = require('../src/shared/bluesky');
 const { LINE_TO_RAIL_ROUTE } = require('../src/shared/ctaAlerts');
 const { resolvedEventLink } = require('../src/shared/eventLink');
-const { eventAssociatedRefsForLink } = require('../src/shared/standardSite');
 const { describeSignal } = require('../src/shared/observationDescribe');
 
 const WINDOW_MS = 30 * 60 * 1000;
@@ -338,12 +337,8 @@ async function sweepResolutions({ kind, getName, agentGetter, now }) {
         console.log(`roundup-resolve: ${label} source post missing — marked resolved silently`);
         continue;
       }
-      // Mint the event's standard.site document + attach associatedRefs so the
-      // resolution card renders enhanced immediately (the root post rkey, = the
-      // event slug, is known here), instead of waiting on the page-side rebuild.
-      const associatedRefs = link ? await eventAssociatedRefsForLink(a, link) : null;
       const result = link
-        ? await postTextWithLinkCard(a, text, replyRef, link, associatedRefs)
+        ? await postTextWithLinkCard(a, text, replyRef, link)
         : await postText(a, text, replyRef);
       markRoundupResolved(row.id, result.uri, now);
       console.log(`Posted roundup resolution ${label}: ${result.url}`);
