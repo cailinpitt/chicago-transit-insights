@@ -102,8 +102,23 @@ cp "$WORK/alerts.csv" "$LAST/alerts.csv"
 cp "$WORK/standard-site.json" "$LAST/standard-site.json"
 echo "push-web-data: uploaded to $REMOTE"
 
-# 4. Trigger a rebuild so prerendered OG cards pick up new incidents.
-if [ -n "$GITHUB_DISPATCH_TOKEN" ]; then
+# 4. Trigger a rebuild so prerendered OG cards / standard.site tags pick up new
+# incidents — debounced. alerts.json changes almost every tick, so an unthrottled
+# dispatch fires a Pages deploy every 1-2 min, faster than Pages rolls them out,
+# which wedges the public site on a stale build. The R2 upload above already ran
+# (the client reads live data from R2, so the app stays current regardless); this
+# only gates how often we rebuild the prerendered pages, which don't need
+# minute-level freshness. Fire at most once per REBUILD_DEBOUNCE_SECONDS; the
+# workflow's own schedule is the longer backstop.
+DEBOUNCE="${REBUILD_DEBOUNCE_SECONDS:-900}"
+STAMP="$LAST/.last-dispatch"
+now_s=$(date +%s)
+last_s=$(cat "$STAMP" 2>/dev/null || echo 0)
+if [ -z "$GITHUB_DISPATCH_TOKEN" ]; then
+  echo "push-web-data: GITHUB_DISPATCH_TOKEN unset; relying on scheduled rebuild"
+elif [ "$((now_s - last_s))" -lt "$DEBOUNCE" ]; then
+  echo "push-web-data: last rebuild $((now_s - last_s))s ago (< ${DEBOUNCE}s); debouncing dispatch"
+else
   code=$(curl -fsS -o /dev/null -w '%{http_code}' -X POST \
     -H "Authorization: Bearer $GITHUB_DISPATCH_TOKEN" \
     -H "Accept: application/vnd.github+json" \
@@ -111,6 +126,5 @@ if [ -n "$GITHUB_DISPATCH_TOKEN" ]; then
     "https://api.github.com/repos/$DISPATCH_REPO/dispatches" \
     -d '{"event_type":"data-updated"}') || code="curl-failed"
   echo "push-web-data: repository_dispatch -> $DISPATCH_REPO (http $code)"
-else
-  echo "push-web-data: GITHUB_DISPATCH_TOKEN unset; relying on scheduled rebuild"
+  [ "$code" = "204" ] && echo "$now_s" > "$STAMP"
 fi
