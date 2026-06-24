@@ -59,6 +59,26 @@ test('CTA accessibility gate captures elevator-status alerts that the timeline r
   assert.equal(row.unitLabel, 'to Red/Brown/Purple Line platform');
 });
 
+test('CTA accessibility gate ignores generic schedule alerts with accessible-route context', () => {
+  const rows = toCtaOutageRows(
+    [
+      {
+        id: '115376',
+        impact: 'Service Change',
+        headline: 'New Schedules in Effect',
+        shortDescription:
+          'Beginning Sunday, June 7, updated schedules will go into effect on some CTA bus routes. See latest schedules at transitchicago.com.',
+        fullDescription:
+          'Beginning Sunday, June 7, updated schedules will go into effect on some CTA bus routes. Accessible service information is available at transitchicago.com.',
+        trainLines: ['g', 'org', 'red'],
+        url: 'https://example.test/115376',
+      },
+    ],
+    1_700_000_000_000,
+  );
+  assert.equal(rows.length, 0);
+});
+
 test('Metra accessibility gate captures ADA notices that the timeline rejects', () => {
   const alert = {
     id: 'metra-alert-1',

@@ -3,7 +3,12 @@ const metraStations = require('../metra/data/metraStations.json');
 const { isSignificantAlert } = require('./ctaAlerts');
 const { isSignificantMetraAlert, alertRelevance } = require('../metra/metraAlerts');
 
-const ACCESS_PATTERNS = [/\belevator\b/i, /\bescalator\b/i, /\baccessib/i, /\bentrance\b/i];
+const ACCESS_PATTERNS = [
+  /\b(?:elevator|escalator)\b/i,
+  /\b(?:ada|accessib(?:le|ility)?)\b.{0,80}\b(?:out(?:\s+of\s+service)?|unavailable|closed|closure|issue|problem|not\s+available|not\s+working)\b/i,
+  /\b(?:out(?:\s+of\s+service)?|unavailable|closed|closure|issue|problem|not\s+available|not\s+working)\b.{0,80}\b(?:ada|accessib(?:le|ility)?)\b/i,
+  /\bentrance\b.{0,80}\b(?:closed|closure|unavailable|out\s+of\s+service)\b/i,
+];
 
 function slugifyStation(name) {
   if (!name) return null;
@@ -131,6 +136,7 @@ function parseStationAndUnit(text, candidates) {
 function isCtaAccessibilityAlert(alert) {
   if (!alert || isSignificantAlert(alert)) return false;
   if (alert.impact === 'Elevator Status') return true;
+  if (/\bschedules?\b/i.test(alert.headline || '')) return false;
   return hasAccessibilityText(textForCtaAlert(alert));
 }
 
