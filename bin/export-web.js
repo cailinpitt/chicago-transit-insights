@@ -597,6 +597,190 @@ function buildIncidents(builtAlerts, builtObservations) {
   return consolidateMetraPlannedWorkIncidents(incidents);
 }
 
+// --- Sharded web export (alerts-recent.json + monthly + per-line + index) ---
+// The single full-history alerts.json grows unbounded yet is fetched + parsed by
+// every page load. These shards let the site load a bounded recent slice by
+// default and lazily fetch immutable archive shards / all-time per-line history
+// on demand, while still exposing every incident.
+
+// Recent window the site loads by default. 93d (not 90) leaves a small margin so
+// the client's 90-day aggregations never reference an incident the recent file
+// dropped at the boundary.
+const RECENT_WINDOW_DAYS = 93;
+const RECENT_WINDOW_MS = RECENT_WINDOW_DAYS * 24 * 60 * 60 * 1000;
+
+// Month key in Chicago local time (matches export-daily.js day bucketing), so a
+// shard boundary lines up with how the site labels calendar dates.
+const monthKeyFmt = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'America/Chicago',
+  year: 'numeric',
+  month: '2-digit',
+});
+function chicagoMonthKey(ts) {
+  let y = null;
+  let m = null;
+  for (const p of monthKeyFmt.formatToParts(new Date(ts))) {
+    if (p.type === 'year') y = p.value;
+    else if (p.type === 'month') m = p.value;
+  }
+  return `${y}-${m}`;
+}
+
+function incidentFirstSeen(inc) {
+  const ts = inc?.lifecycle?.first_seen_ts;
+  return typeof ts === 'number' && Number.isFinite(ts) ? ts : null;
+}
+
+// Pure: split the full consolidated incidents[] into the recent slice, immutable
+// monthly archive shards (by Chicago month of first_seen), all-time per-line
+// files (one per route key in incident.routes — matching how LinePage filters),
+// and an index. Input order (first_seen DESC) is preserved within every bucket.
+function shardIncidents(incidents, now = Date.now()) {
+  const recentCutoff = now - RECENT_WINDOW_MS;
+  const recent = [];
+  const monthMap = new Map();
+  const lineMap = new Map();
+  const idMonth = {};
+
+  for (const inc of incidents || []) {
+    const firstSeen = incidentFirstSeen(inc);
+    const active = inc?.lifecycle?.active === true;
+
+    // recent = within the window OR still active (an old-but-open incident must
+    // stay on the home page regardless of age).
+    if (active || (firstSeen != null && firstSeen >= recentCutoff)) recent.push(inc);
+
+    // Monthly archive shard, keyed by the immutable first_seen month. An incident
+    // with no first_seen is degenerate (the export always sets it from the post
+    // ts) — it still rides `recent` if active but isn't archived/indexed.
+    if (firstSeen != null) {
+      const key = chicagoMonthKey(firstSeen);
+      let list = monthMap.get(key);
+      if (!list) {
+        list = [];
+        monthMap.set(key, list);
+      }
+      list.push(inc);
+      idMonth[inc.id] = key;
+    }
+
+    // All-time per-line files: one bucket per route the incident touches. A
+    // multi-line incident appears in each line's file (intentional duplication).
+    for (const route of inc.routes || []) {
+      if (!route) continue;
+      let list = lineMap.get(route);
+      if (!list) {
+        list = [];
+        lineMap.set(route, list);
+      }
+      list.push(inc);
+    }
+  }
+
+  const months = [...monthMap.entries()]
+    .sort((a, b) => (a[0] < b[0] ? 1 : -1)) // newest month first
+    .map(([key, list]) => {
+      let min = Infinity;
+      let max = -Infinity;
+      for (const inc of list) {
+        const ts = incidentFirstSeen(inc);
+        if (ts == null) continue;
+        if (ts < min) min = ts;
+        if (ts > max) max = ts;
+      }
+      return {
+        key,
+        url: `alerts/${key}.json`,
+        count: list.length,
+        min_ts: min === Infinity ? null : min,
+        max_ts: max === -Infinity ? null : max,
+        incidents: list,
+      };
+    });
+
+  const lines = [...lineMap.entries()]
+    .sort((a, b) => (a[0] < b[0] ? -1 : 1))
+    .map(([key, list]) => ({
+      key,
+      url: `incidents/by-line/${encodeURIComponent(key)}.json`,
+      count: list.length,
+      incidents: list,
+    }));
+
+  return { recent, recent_from_ts: recentCutoff, months, lines, idMonth };
+}
+
+// Write `body` only when the file's bytes change, so unchanged immutable shards
+// neither rewrite locally nor churn the downstream R2 upload.
+function writeFileIfChanged(filePath, body) {
+  if (Fs.existsSync(filePath)) {
+    try {
+      if (Fs.readFileSync(filePath, 'utf8') === body) return false;
+    } catch (_) {}
+  }
+  Fs.mkdirSync(Path.dirname(filePath), { recursive: true });
+  Fs.writeFileSync(filePath, body, 'utf8');
+  return true;
+}
+
+// Emit the shard set into `dir`. Archive shards (months, per-line) deliberately
+// omit generated_at so an unchanged month/line is byte-identical run-to-run and
+// skips the upload; recent + index carry generated_at and refresh each tick.
+function writeShards(out, dir, now = Date.now()) {
+  const { recent, recent_from_ts, months, lines, idMonth } = shardIncidents(out.incidents, now);
+  let written = 0;
+
+  const recentBody = `${JSON.stringify({
+    schema_version: out.schema_version,
+    generated_at: out.generated_at,
+    data_start_ts: out.data_start_ts,
+    recent_from_ts,
+    incidents: recent,
+  })}\n`;
+  if (writeFileIfChanged(Path.join(dir, 'alerts-recent.json'), recentBody)) written++;
+
+  for (const m of months) {
+    const body = `${JSON.stringify({
+      schema_version: out.schema_version,
+      month: m.key,
+      incidents: m.incidents,
+    })}\n`;
+    if (writeFileIfChanged(Path.join(dir, 'alerts', `${m.key}.json`), body)) written++;
+  }
+
+  for (const l of lines) {
+    const body = `${JSON.stringify({
+      schema_version: out.schema_version,
+      line: l.key,
+      incidents: l.incidents,
+    })}\n`;
+    const file = Path.join(dir, 'incidents', 'by-line', `${encodeURIComponent(l.key)}.json`);
+    if (writeFileIfChanged(file, body)) written++;
+  }
+
+  const indexBody = `${JSON.stringify({
+    schema_version: out.schema_version,
+    generated_at: out.generated_at,
+    data_start_ts: out.data_start_ts,
+    recent_from_ts,
+    months: months.map(({ key, url, count, min_ts, max_ts }) => ({
+      key,
+      url,
+      count,
+      min_ts,
+      max_ts,
+    })),
+    lines: lines.map(({ key, url, count }) => ({ key, url, count })),
+    id_month: idMonth,
+  })}\n`;
+  if (writeFileIfChanged(Path.join(dir, 'alerts-index.json'), indexBody)) written++;
+
+  console.error(
+    `export-web: wrote ${written} shard file(s) to ${dir} ` +
+      `(${recent.length} recent, ${months.length} months, ${lines.length} lines)`,
+  );
+}
+
 function main() {
   const db = new Database(DB_PATH, { readonly: true });
 
@@ -999,7 +1183,20 @@ function main() {
     incidents,
   };
 
-  const outputPath = process.argv[2];
+  // Args: an optional positional alerts.json path (legacy full-history file) and
+  // an optional `--shards <dir>` to also emit the sharded payload. Both may be
+  // given during the rollout so the old and new files publish side by side.
+  const args = process.argv.slice(2);
+  let outputPath = null;
+  let shardDir = null;
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '--shards') shardDir = args[++i];
+    else if (!outputPath && !args[i].startsWith('--')) outputPath = args[i];
+  }
+
+  // Shards first, so they're emitted even when the legacy write skips on
+  // "no data changes" (writeFileIfChanged no-ops the unchanged shards itself).
+  if (shardDir) writeShards(out, shardDir);
 
   if (outputPath) {
     // Only write if the data actually changed — generated_at updates every run,
@@ -1041,7 +1238,7 @@ function main() {
     // whitespace) and parse time. Stdout below stays pretty for manual/debug use.
     Fs.writeFileSync(outputPath, `${JSON.stringify(out)}\n`, 'utf8');
     console.error(`export-web: wrote ${out.incidents.length} incidents to ${outputPath}`);
-  } else {
+  } else if (!shardDir) {
     process.stdout.write(JSON.stringify(out, null, 2) + '\n');
   }
 }
@@ -1056,4 +1253,7 @@ module.exports = {
   officialAlertBlock,
   metraTrainNumberFromTripId,
   postUrlRkey,
+  shardIncidents,
+  chicagoMonthKey,
+  RECENT_WINDOW_MS,
 };
