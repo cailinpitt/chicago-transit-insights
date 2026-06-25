@@ -631,6 +631,27 @@ function incidentFirstSeen(inc) {
   return typeof ts === 'number' && Number.isFinite(ts) ? ts : null;
 }
 
+// Every Bluesky post rkey an incident can be deep-linked by: its official
+// alert(s) and each bot detection. The canonical `inc.id` is one of these; the
+// rest are non-canonical aliases a shared link might use. Mirrors the rkeys
+// cta-alert-history's findIncidentById matches on.
+function incidentPostRkeys(inc) {
+  const out = [];
+  const push = (url) => {
+    const rk = postUrlRkey(url);
+    if (rk) out.push(rk);
+  };
+  const alerts =
+    Array.isArray(inc.official_alerts) && inc.official_alerts.length > 0
+      ? inc.official_alerts
+      : inc.official_alert
+        ? [inc.official_alert]
+        : [];
+  for (const a of alerts) push(a?.post_url);
+  for (const d of inc.detections || []) push(d?.post_url);
+  return out;
+}
+
 // Pure: split the full consolidated incidents[] into the recent slice, immutable
 // monthly archive shards (by Chicago month of first_seen), all-time per-line
 // files (one per route key in incident.routes — matching how LinePage filters),
@@ -641,6 +662,7 @@ function shardIncidents(incidents, now = Date.now()) {
   const monthMap = new Map();
   const lineMap = new Map();
   const idMonth = {};
+  const rkeyMonth = {};
 
   for (const inc of incidents || []) {
     const firstSeen = incidentFirstSeen(inc);
@@ -662,6 +684,12 @@ function shardIncidents(incidents, now = Date.now()) {
       }
       list.push(inc);
       idMonth[inc.id] = key;
+      // Secondary post rkeys → month, so a shared link using a non-canonical
+      // bsky post rkey of an archived incident still resolves (the canonical id
+      // is already in idMonth, so skip it to keep the map small).
+      for (const rkey of incidentPostRkeys(inc)) {
+        if (rkey !== inc.id) rkeyMonth[rkey] = key;
+      }
     }
 
     // All-time per-line files: one bucket per route the incident touches. A
@@ -707,7 +735,7 @@ function shardIncidents(incidents, now = Date.now()) {
       incidents: list,
     }));
 
-  return { recent, recent_from_ts: recentCutoff, months, lines, idMonth };
+  return { recent, recent_from_ts: recentCutoff, months, lines, idMonth, rkeyMonth };
 }
 
 // Write `body` only when the file's bytes change, so unchanged immutable shards
@@ -727,7 +755,10 @@ function writeFileIfChanged(filePath, body) {
 // omit generated_at so an unchanged month/line is byte-identical run-to-run and
 // skips the upload; recent + index carry generated_at and refresh each tick.
 function writeShards(out, dir, now = Date.now()) {
-  const { recent, recent_from_ts, months, lines, idMonth } = shardIncidents(out.incidents, now);
+  const { recent, recent_from_ts, months, lines, idMonth, rkeyMonth } = shardIncidents(
+    out.incidents,
+    now,
+  );
   let written = 0;
 
   const recentBody = `${JSON.stringify({
@@ -772,6 +803,7 @@ function writeShards(out, dir, now = Date.now()) {
     })),
     lines: lines.map(({ key, url, count }) => ({ key, url, count })),
     id_month: idMonth,
+    rkey_month: rkeyMonth,
   })}\n`;
   if (writeFileIfChanged(Path.join(dir, 'alerts-index.json'), indexBody)) written++;
 

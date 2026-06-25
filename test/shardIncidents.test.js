@@ -16,6 +16,30 @@ function incident(id, firstSeenTs, { active = false, routes = ['red'] } = {}) {
   };
 }
 
+test('rkey_month maps secondary post rkeys to their month, excluding the canonical id', () => {
+  const inc = {
+    id: 'alertrkey',
+    mode: 'train',
+    routes: ['red'],
+    lifecycle: {
+      first_seen_ts: Date.parse('2026-05-10T12:00:00Z'),
+      resolved_ts: null,
+      active: false,
+    },
+    official_alert: { post_url: 'https://bsky.app/profile/did/post/alertrkey' },
+    detections: [
+      { post_url: 'https://bsky.app/profile/did/post/botrkey1' },
+      { post_url: 'https://bsky.app/profile/did/post/botrkey2' },
+    ],
+  };
+  const { rkeyMonth } = shardIncidents([inc], NOW);
+  // Secondary detection rkeys resolve to the incident's month.
+  assert.equal(rkeyMonth.botrkey1, '2026-05');
+  assert.equal(rkeyMonth.botrkey2, '2026-05');
+  // The canonical id (also the alert rkey) stays out of rkey_month (it's in idMonth).
+  assert.equal(rkeyMonth.alertrkey, undefined);
+});
+
 test('recent = within window OR active, regardless of age', () => {
   const old = incident('old', NOW - 200 * DAY); // way outside the 93d window
   const oldButActive = incident('oldActive', NOW - 200 * DAY, { active: true });
