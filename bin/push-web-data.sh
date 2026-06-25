@@ -59,8 +59,9 @@ hc_ping start  # signal start for duration measurement
 
 # 1. Export current data into the working dir (readonly DB read, cron-safe).
 #    --shards also emits the bounded recent slice + monthly archive shards +
-#    all-time per-line files + index, alongside the legacy full-history
-#    alerts.json (published side by side during the rollout).
+#    all-time per-line files + index + aggregates.json (precomputed YoY),
+#    alongside the legacy full-history alerts.json (published side by side
+#    during the rollout).
 node "$CTA_INSIGHTS/bin/export-web.js" "$WORK/alerts.json" --shards "$WORK"
 node "$CTA_INSIGHTS/bin/export-accessibility.js" "$WORK/accessibility.json"
 node "$CTA_INSIGHTS/bin/export-daily.js" "$WORK/daily-counts.json"
@@ -85,9 +86,10 @@ fi
 SHORT_TTL="Cache-Control: public, max-age=30"
 
 # 3a. Short-TTL, high-churn top-level files (legacy full file + recent slice +
-#     index all change ~every tick; the existing accessibility/daily/csv too).
+#     index + aggregates all change ~every tick; the existing
+#     accessibility/daily/csv too).
 for f in alerts.json accessibility.json daily-counts.json alerts.csv \
-         alerts-recent.json alerts-index.json; do
+         alerts-recent.json alerts-index.json aggregates.json; do
   rclone copyto "$WORK/$f" "$REMOTE/$f" \
     --s3-no-check-bucket \
     --header-upload "$SHORT_TTL"

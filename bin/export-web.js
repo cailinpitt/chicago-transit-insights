@@ -781,6 +781,95 @@ function writeShards(out, dir, now = Date.now()) {
   );
 }
 
+// --- Precomputed analytics (aggregates.json) ---
+// The one analytics input that genuinely needs >90 days of history: the SPA's
+// year-over-year compares a trailing 30-day window against the same 30 days a
+// year ago, so it can't be derived from alerts-recent.json. Precomputing it
+// here lets Stats + SystemHealth drop their full-history fetch. Per-line and
+// per-Compare YoY stays client-side over the all-time per-line shards (each page
+// already loads its own line file), so this stays just overall + per mode.
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+const YOY_WINDOW_DAYS = 30;
+
+// Map the wire `mode` to the SPA's legacy kind keys (commuter_rail → metra), so
+// aggregates.by_mode lines up with how SystemHealthPage scopes itself per mode.
+function aggregateModeKey(mode) {
+  return mode === 'commuter_rail' ? 'metra' : mode;
+}
+
+// Year-over-year counts for a list of incident first_seen timestamps. One bump
+// per timestamp, so passing one ts per incident yields the same counts the SPA's
+// computeYearOverYear produces after it groups records back to one-per-incident.
+// Direct port of that window math (cta-alert-history/src/lib/aggregate.js) —
+// keep the two in sync if the windows change.
+function yearOverYear(firstSeenList, now, dataStartTs, windowDays = YOY_WINDOW_DAYS) {
+  const yearMs = 365 * DAY_MS;
+  const windowMs = windowDays * DAY_MS;
+  const currentEndTs = now;
+  const currentStartTs = now - windowMs;
+  const priorEndTs = now - yearMs;
+  const priorStartTs = priorEndTs - windowMs;
+  // Only emit a comparison against a prior window we actually have coverage for;
+  // the trailing-window currentCount is always well-defined.
+  const enoughData = dataStartTs == null || dataStartTs <= priorStartTs;
+  let currentCount = 0;
+  let priorCount = 0;
+  for (const ts of firstSeenList) {
+    if (ts == null) continue;
+    if (ts >= currentStartTs && ts <= currentEndTs) currentCount++;
+    else if (ts >= priorStartTs && ts <= priorEndTs) priorCount++;
+  }
+  const pctChange = enoughData && priorCount > 0 ? (currentCount - priorCount) / priorCount : null;
+  return {
+    enoughData,
+    currentCount,
+    priorCount,
+    pctChange,
+    currentStartTs,
+    currentEndTs,
+    priorStartTs,
+    priorEndTs,
+  };
+}
+
+// Pure: the precomputed analytics rollup published as aggregates.json. Today
+// that's year-over-year only (overall + per mode); everything else the SPA
+// charts stays client-side over the recent file.
+function computeAggregates(incidents, { now = Date.now(), dataStartTs = null } = {}) {
+  const all = [];
+  const byMode = { train: [], bus: [], metra: [] };
+  for (const inc of incidents || []) {
+    const ts = incidentFirstSeen(inc);
+    if (ts == null) continue;
+    all.push(ts);
+    const key = aggregateModeKey(inc.mode);
+    if (byMode[key]) byMode[key].push(ts);
+  }
+  return {
+    yoy: {
+      window_days: YOY_WINDOW_DAYS,
+      overall: yearOverYear(all, now, dataStartTs),
+      by_mode: {
+        train: yearOverYear(byMode.train, now, dataStartTs),
+        bus: yearOverYear(byMode.bus, now, dataStartTs),
+        metra: yearOverYear(byMode.metra, now, dataStartTs),
+      },
+    },
+  };
+}
+
+function writeAggregates(out, dir, now = Date.now()) {
+  const body = `${JSON.stringify({
+    schema_version: out.schema_version,
+    generated_at: out.generated_at,
+    data_start_ts: out.data_start_ts,
+    ...computeAggregates(out.incidents, { now, dataStartTs: out.data_start_ts }),
+  })}\n`;
+  const wrote = writeFileIfChanged(Path.join(dir, 'aggregates.json'), body);
+  console.error(`export-web: ${wrote ? 'wrote' : 'unchanged'} aggregates.json in ${dir}`);
+}
+
 function main() {
   const db = new Database(DB_PATH, { readonly: true });
 
@@ -1194,9 +1283,12 @@ function main() {
     else if (!outputPath && !args[i].startsWith('--')) outputPath = args[i];
   }
 
-  // Shards first, so they're emitted even when the legacy write skips on
-  // "no data changes" (writeFileIfChanged no-ops the unchanged shards itself).
-  if (shardDir) writeShards(out, shardDir);
+  // Shards + aggregates first, so they're emitted even when the legacy write
+  // skips on "no data changes" (writeFileIfChanged no-ops unchanged shards).
+  if (shardDir) {
+    writeShards(out, shardDir);
+    writeAggregates(out, shardDir);
+  }
 
   if (outputPath) {
     // Only write if the data actually changed — generated_at updates every run,
@@ -1256,4 +1348,5 @@ module.exports = {
   shardIncidents,
   chicagoMonthKey,
   RECENT_WINDOW_MS,
+  computeAggregates,
 };
