@@ -1233,6 +1233,33 @@ function getRecentPulsePostsAll({ kind, line, withinMs }, now = Date.now()) {
     .all(kind, line, now - withinMs);
 }
 
+// Set of line/route ids that currently have an open (un-cleared) silence
+// disruption of the given source. Cross-detector suppression primitive for the
+// bus thin-gaps + pulse bins: pulse scans the whole roster (allRoutes) and only
+// gates on expectedActive ≥ 2, so a low-frequency route that also clears that
+// gate can be claimed by both detectors for the same ongoing silence — two
+// standalone incidents on two accounts. Each defers to an open silence from the
+// other so a route has at most one open incident. Bus disruptions carry no
+// direction/segment, so an observed-clear on the same line at/after the firing
+// is sufficient resolution (mirrors findUnresolvedThinGaps in bin/bus/thin-gaps.js).
+function openSilenceLines({ kind, source, sinceMs }, now = Date.now()) {
+  const rows = db()
+    .prepare(`
+      SELECT DISTINCT d.line
+      FROM disruption_events d
+      WHERE d.kind = ? AND d.source = ?
+        AND d.posted = 1 AND d.post_uri IS NOT NULL
+        AND d.ts >= ?
+        AND NOT EXISTS (
+          SELECT 1 FROM disruption_events c
+          WHERE c.kind = d.kind AND c.source = 'observed-clear'
+            AND c.line = d.line AND c.ts >= d.ts
+        )
+    `)
+    .all(kind, source, now - sinceMs);
+  return new Set(rows.map((r) => String(r.line)));
+}
+
 function recordDisruption(
   { kind, line, direction, fromStation, toStation, source, posted, postUri, evidence = null },
   now = Date.now(),
@@ -2101,6 +2128,7 @@ module.exports = {
   getMetraDisruptions,
   getRecentPulsePost,
   getRecentPulsePostsAll,
+  openSilenceLines,
   hasObservedClearForPulse,
   hasUnresolvedCtaAlert,
   getPulseState,

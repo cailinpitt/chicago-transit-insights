@@ -55,6 +55,7 @@ const {
   hasUnresolvedCtaAlert,
   getDb,
   recordMetaSignal,
+  openSilenceLines,
 } = require('../../src/shared/history');
 
 const DRY_RUN = process.env.BUS_PULSE_DRY_RUN === '1' || process.argv.includes('--dry-run');
@@ -70,6 +71,10 @@ const MIN_HOUR = 5;
 const MAX_HOUR = 24;
 const POLL_LOOKBACK_MS = 60 * 60 * 1000; // upper bound for observation window
 const KNOWN_PIDS_LOOKBACK_MS = 7 * 24 * 60 * 60 * 1000; // matches obs rolloff
+// Cross-detector suppression window. A route already reported silent by
+// thin-gaps shouldn't ALSO open a pulse blackout. 7d comfortably exceeds any
+// continuous single-route silence and matches the observation roll-off horizon.
+const CROSS_DETECTOR_LOOKBACK_MS = 7 * 24 * 60 * 60 * 1000;
 
 function chicagoHourNow(now = new Date()) {
   const h = new Intl.DateTimeFormat('en-US', {
@@ -474,8 +479,19 @@ async function main() {
   const COLD_START_GRACE_MS = 6 * 60 * 60 * 1000;
   const recentlyActiveRoutes = getActiveBusRoutesSince(now - COLD_START_GRACE_MS);
 
+  // Defer to an already-open thin-gap silence: pulse scans the whole roster and
+  // only gates on expectedActive ≥ 2, so a low-frequency route that also clears
+  // that gate could open a second standalone incident for a silence thin-gaps is
+  // already reporting. observed-clear is line-keyed and shared, so whichever
+  // detector posts the clear releases the suppression for both.
+  const openThinGaps = openSilenceLines(
+    { kind: 'bus', source: 'observed-thin', sinceMs: CROSS_DETECTOR_LOOKBACK_MS },
+    now,
+  );
+  const scanRoutes = pulseRoutes.filter((r) => !openThinGaps.has(String(r)));
+
   const detection = await detectBusBlackouts({
-    routes: pulseRoutes,
+    routes: scanRoutes,
     routeNames,
     observationsByRoute,
     loadPattern,

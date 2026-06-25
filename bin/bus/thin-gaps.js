@@ -15,7 +15,12 @@ const {
   expectedBusRouteActiveTrips,
   loadIndex,
 } = require('../../src/shared/gtfs');
-const { recordMetaSignal, recordDisruption, getDb } = require('../../src/shared/history');
+const {
+  recordMetaSignal,
+  recordDisruption,
+  getDb,
+  openSilenceLines,
+} = require('../../src/shared/history');
 const { acquireCooldown, isOnCooldown } = require('../../src/shared/state');
 const { loginBus, postText } = require('../../src/bus/bluesky');
 const { buildRollupThread } = require('../../src/shared/post');
@@ -43,6 +48,11 @@ const CLEAR_LOOKBACK_MS = 24 * 60 * 60 * 1000;
 // alone — observations roll off at 7d so we can't prove recovery anyway, and
 // a stale incident from a month ago isn't worth retroactively resolving.
 const SYNTHETIC_CLEAR_LOOKBACK_MS = 30 * 24 * 60 * 60 * 1000;
+
+// Cross-detector suppression window — mirror of pulse's. A route already
+// reported silent by pulse shouldn't ALSO open a thin-gap. 7d comfortably
+// exceeds any continuous silence and matches the observation roll-off horizon.
+const CROSS_DETECTOR_LOOKBACK_MS = 7 * 24 * 60 * 60 * 1000;
 
 function findUnresolvedThinGaps(now, { sinceMs = CLEAR_LOOKBACK_MS, untilMs = 0 } = {}) {
   // Any observed-clear row (posted or synthetic) counts as resolution so we
@@ -208,8 +218,15 @@ async function main() {
   const priorHour = new Date(now - HOUR_MS);
   const nextHour = new Date(now + HOUR_MS);
   const drops = [];
+  // Defer to an already-open pulse blackout on the same route so a single
+  // ongoing silence can't surface as both a thin-gap and a pulse incident.
+  // observed-clear is line-keyed and shared, releasing both detectors at once.
+  const openPulses = openSilenceLines(
+    { kind: 'bus', source: 'observed', sinceMs: CROSS_DETECTOR_LOOKBACK_MS },
+    now,
+  );
   const allEvents = detectThinGaps({
-    routes: lowFrequency.filter((r) => index.routes[r]),
+    routes: lowFrequency.filter((r) => index.routes[r] && !openPulses.has(String(r))),
     getObservations: (route, since) => getBusObservations(route, since),
     getHeadway: (route) => expectedBusRouteHeadwayMin(route, new Date(now)),
     getActiveTrips: (route) => expectedBusRouteActiveTrips(route, new Date(now)),
