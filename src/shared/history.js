@@ -130,6 +130,27 @@ function db() {
     CREATE INDEX IF NOT EXISTS idx_disruption_kind_line_ts
       ON disruption_events(kind, line, ts);
 
+    -- Hourly progress updates threaded under a long-running absence incident (a
+    -- thin-service gap or pulse blackout): a frozen evidence snapshot + rendered
+    -- "still no service — ~Nh in" sentence + the Bluesky reply URI (null for
+    -- silently backfilled rows). An ARCHIVE kept forever like disruption_events,
+    -- so an event page keeps its update timeline long after the observation
+    -- snapshots roll off. disruption_id keys back to the open disruption row.
+    CREATE TABLE IF NOT EXISTS incident_updates (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      disruption_id INTEGER NOT NULL,
+      kind TEXT NOT NULL,
+      line TEXT NOT NULL,
+      direction TEXT,
+      source TEXT NOT NULL,
+      ts INTEGER NOT NULL,
+      evidence TEXT,
+      description TEXT,
+      post_uri TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_incident_updates_disruption_ts
+      ON incident_updates(disruption_id, ts);
+
     CREATE TABLE IF NOT EXISTS pulse_state (
       line TEXT NOT NULL,
       direction TEXT NOT NULL,
@@ -1260,6 +1281,124 @@ function openSilenceLines({ kind, source, sinceMs }, now = Date.now()) {
   return new Set(rows.map((r) => String(r.line)));
 }
 
+// Posted disruptions of `source` (e.g. 'observed-thin', 'observed') with no
+// matching 'observed-clear' at/after them — i.e. still-open firings. The clear
+// match keys on line + direction + from/to (IFNULL-normalized) so it works for
+// both bus (null direction/segment → line-only) and train (full segment key).
+// Window is [now - sinceMs, now - untilMs). Powers the hourly progress sweep.
+function findUnresolvedDisruptions({ kind, source, sinceMs, untilMs = 0 }, now = Date.now()) {
+  return db()
+    .prepare(`
+      SELECT d.id, d.ts, d.line, d.direction, d.from_station, d.to_station,
+             d.evidence, d.post_uri AS postUri
+      FROM disruption_events d
+      WHERE d.kind = ? AND d.source = ?
+        AND d.posted = 1 AND d.post_uri IS NOT NULL
+        AND d.ts >= ? AND d.ts < ?
+        AND NOT EXISTS (
+          SELECT 1 FROM disruption_events c
+          WHERE c.kind = d.kind AND c.source = 'observed-clear'
+            AND IFNULL(c.line, '')         = IFNULL(d.line, '')
+            AND IFNULL(c.direction, '')    = IFNULL(d.direction, '')
+            AND IFNULL(c.from_station, '') = IFNULL(d.from_station, '')
+            AND IFNULL(c.to_station, '')   = IFNULL(d.to_station, '')
+            AND c.ts >= d.ts
+        )
+      ORDER BY d.ts ASC
+    `)
+    .all(kind, source, now - sinceMs, now - untilMs);
+}
+
+// --- Progress updates (incident_updates) ---
+// A long-running absence incident records an hourly progress update threaded
+// under its opening post; keyed on the open disruption_events row's id.
+
+// Epoch-ms start of `ts`'s clock hour — the backfill idempotency bucket.
+function hourBucketTs(ts) {
+  return ts - (ts % (60 * 60 * 1000));
+}
+
+function recordIncidentUpdate({
+  disruptionId,
+  kind,
+  line,
+  direction,
+  source,
+  ts,
+  evidence,
+  description,
+  postUri,
+}) {
+  let evidenceJson = null;
+  if (evidence && typeof evidence === 'object' && Object.keys(evidence).length > 0) {
+    try {
+      evidenceJson = JSON.stringify(evidence);
+    } catch (_e) {
+      evidenceJson = null;
+    }
+  }
+  db()
+    .prepare(`
+      INSERT INTO incident_updates
+        (disruption_id, kind, line, direction, source, ts, evidence, description, post_uri)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `)
+    .run(
+      disruptionId,
+      kind,
+      String(line),
+      direction || null,
+      source,
+      ts,
+      evidenceJson,
+      description || null,
+      postUri || null,
+    );
+}
+
+// Most-recent update ts for an incident, or null — the live cadence gate.
+function getLatestIncidentUpdateTs(disruptionId) {
+  const row = db()
+    .prepare('SELECT MAX(ts) AS ts FROM incident_updates WHERE disruption_id = ?')
+    .get(disruptionId);
+  return row?.ts ?? null;
+}
+
+// Has an update already been written for the clock hour containing `ts`?
+// Backfill idempotency.
+function incidentUpdateExistsForHour(disruptionId, ts) {
+  const lo = hourBucketTs(ts);
+  const hi = lo + 60 * 60 * 1000;
+  const row = db()
+    .prepare(
+      'SELECT 1 FROM incident_updates WHERE disruption_id = ? AND ts >= ? AND ts < ? LIMIT 1',
+    )
+    .get(disruptionId, lo, hi);
+  return !!row;
+}
+
+// All updates for a set of disruption ids, grouped by disruption_id (ascending
+// ts). One query for the whole web export.
+function listIncidentUpdatesByDisruption(disruptionIds) {
+  const ids = [...new Set((disruptionIds || []).map((n) => Number(n)).filter(Number.isFinite))];
+  if (ids.length === 0) return new Map();
+  const placeholders = ids.map(() => '?').join(',');
+  const rows = db()
+    .prepare(`
+      SELECT id, disruption_id, kind, line, direction, source, ts, evidence, description, post_uri
+      FROM incident_updates
+      WHERE disruption_id IN (${placeholders})
+      ORDER BY ts ASC, id ASC
+    `)
+    .all(...ids);
+  const out = new Map();
+  for (const r of rows) {
+    if (!out.has(r.disruption_id)) out.set(r.disruption_id, []);
+    out.get(r.disruption_id).push(r);
+  }
+  return out;
+}
+
 function recordDisruption(
   { kind, line, direction, fromStation, toStation, source, posted, postUri, evidence = null },
   now = Date.now(),
@@ -2124,6 +2263,12 @@ module.exports = {
   ACCESSIBILITY_CLEAR_TICKS,
   ACCESSIBILITY_ROLLOFF_MS,
   recordDisruption,
+  findUnresolvedDisruptions,
+  recordIncidentUpdate,
+  getLatestIncidentUpdateTs,
+  incidentUpdateExistsForHour,
+  listIncidentUpdatesByDisruption,
+  hourBucketTs,
   getMetraRecordedTripIds,
   getMetraDisruptions,
   getRecentPulsePost,

@@ -53,6 +53,38 @@ function obs(over = {}) {
   };
 }
 
+test('a bot disruption carries its hourly progress updates in evidence.updates', () => {
+  const o = obs({
+    detection_source: 'thin-gap',
+    line: '22',
+    kind: 'bus',
+    from_station: null,
+    to_station: null,
+    resolved_ts: NOW + 3 * 60 * 60_000,
+    active: false,
+    bot_updates: [
+      {
+        ts: NOW + 60 * 60_000,
+        description: '🚌 #22 · still no buses observed — ~1h in, ~2 scheduled trips missed so far.',
+        post_url: null,
+        evidence: { elapsedMin: 60, headwayMin: 30, missedTrips: 2 },
+      },
+    ],
+  });
+  const inc = buildIncidents([], [o])[0];
+  const updates = inc.detections[0].evidence.updates;
+  assert.equal(updates.length, 1);
+  assert.equal(updates[0].ts, NOW + 60 * 60_000);
+  assert.equal(updates[0].post_url, null);
+  assert.match(updates[0].description, /still no buses observed — ~1h in/);
+  assert.deepEqual(updates[0].evidence, { elapsedMin: 60, headwayMin: 30, missedTrips: 2 });
+});
+
+test('a detection with no updates omits evidence.updates (null)', () => {
+  const inc = buildIncidents([], [obs()])[0];
+  assert.equal(inc.detections[0].evidence.updates, null);
+});
+
 test('postUrlRkey extracts the rkey, null on missing/malformed', () => {
   assert.equal(postUrlRkey(url('abc123')), 'abc123');
   assert.equal(postUrlRkey(null), null);

@@ -57,6 +57,7 @@ const {
   recordMetaSignal,
   openSilenceLines,
 } = require('../../src/shared/history');
+const { sweepProgressUpdates, busPulseUpdate } = require('../../src/shared/incidentUpdates');
 
 const DRY_RUN = process.env.BUS_PULSE_DRY_RUN === '1' || process.argv.includes('--dry-run');
 
@@ -609,6 +610,25 @@ async function main() {
         console.error(`handleClear failed for bus/${row.route}: ${e.stack || e.message}`);
       }
     }
+  }
+
+  // Hourly progress reply for blackouts/holds still open after the clear sweep.
+  for (const source of ['observed', 'observed-held']) {
+    await sweepProgressUpdates({
+      kind: 'bus',
+      source,
+      now,
+      getAgent: agentGetter,
+      dryRun: DRY_RUN,
+      buildUpdate: ({ row, evidence }) => {
+        const elapsedMin = (now - row.ts) / 60000;
+        const expectedActive =
+          evidence?.expectedActive ?? expectedBusRouteActiveTrips(row.line, new Date(now));
+        const name = routeNames[row.line];
+        const routeTitle = name ? `#${row.line} ${name}` : `#${row.line}`;
+        return busPulseUpdate({ routeTitle, expectedActive, elapsedMin });
+      },
+    });
   }
 }
 

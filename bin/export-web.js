@@ -277,6 +277,8 @@ function detectionBlock(obs) {
       onset_description: obs.onset_description ?? null,
       train_number: obs.train_number ?? null,
       resolved_description: obs.bot_resolved_description ?? null,
+      // Hourly progress updates ("still no service — ~3h in"); null when none.
+      updates: obs.bot_updates && obs.bot_updates.length > 0 ? obs.bot_updates : null,
     },
   };
 }
@@ -988,6 +990,33 @@ function main() {
     )
     .all();
 
+  // Hourly progress updates recorded against open absence incidents, grouped by
+  // the disruption_events row they annotate (ascending ts). Guarded so a DB
+  // predating the feature exports cleanly. post_uri is null for backfilled rows.
+  const incidentUpdatesByDisruption = (() => {
+    const hasTable = db
+      .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'incident_updates'")
+      .get();
+    if (!hasTable) return new Map();
+    const ids = [...new Set(pulseObservations.map((r) => r.id))];
+    if (ids.length === 0) return new Map();
+    const placeholders = ids.map(() => '?').join(',');
+    const rows = db
+      .prepare(
+        `SELECT disruption_id, ts, description, evidence, post_uri
+         FROM incident_updates
+         WHERE disruption_id IN (${placeholders})
+         ORDER BY ts ASC, id ASC`,
+      )
+      .all(...ids);
+    const out = new Map();
+    for (const r of rows) {
+      if (!out.has(r.disruption_id)) out.set(r.disruption_id, []);
+      out.get(r.disruption_id).push(r);
+    }
+    return out;
+  })();
+
   // Multi-signal roundup posts (stored separately in roundup_anchors).
   const roundupObservations = db
     .prepare(
@@ -1044,6 +1073,7 @@ function main() {
             ? 'thin-gap'
             : 'pulse-cold',
       _evidence: parseEvidence(row.evidence_json),
+      _updates: incidentUpdatesByDisruption.get(row.id) || [],
     })),
     ...roundupObservations.map((row) => ({
       ...row,
@@ -1248,6 +1278,17 @@ function main() {
       // Sentence for the onset timeline entry (start-of-issue). Omitted when
       // there's no meaningful back-date — renderer then shows no onset dot.
       ...(onsetDescription ? { onset_description: onsetDescription } : {}),
+      // Hourly progress updates posted while the incident was still open. Each
+      // is { ts, description, post_url, evidence }; omitted when none.
+      ...(() => {
+        const ups = (row._updates || []).map((u) => ({
+          ts: u.ts,
+          description: u.description,
+          post_url: atUriToUrl(u.post_uri),
+          evidence: parseEvidence(u.evidence),
+        }));
+        return ups.length > 0 ? { bot_updates: ups } : {};
+      })(),
     };
   });
 

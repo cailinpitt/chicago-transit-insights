@@ -23,6 +23,7 @@ const {
 } = require('../../src/shared/history');
 const { acquireCooldown, isOnCooldown } = require('../../src/shared/state');
 const { loginBus, postText } = require('../../src/bus/bluesky');
+const { sweepProgressUpdates, thinGapUpdate } = require('../../src/shared/incidentUpdates');
 const { buildRollupThread } = require('../../src/shared/post');
 const { resolveReplyRef } = require('../../src/shared/bluesky');
 const { setup, runBin } = require('../../src/shared/runBin');
@@ -214,6 +215,25 @@ async function main() {
   // whose routes are observed again, so the public dashboard stops showing
   // them as active. No Bluesky reply — the original post stays as-is.
   await handleStaleClears(now, dryRun);
+
+  // Hourly progress reply for thin-gaps still open after the clear pass — they're
+  // genuinely still silent (any sighting would have cleared them above), so the
+  // update is an honest "still no buses, ~Nh in, ~M trips missed".
+  await sweepProgressUpdates({
+    kind: 'bus',
+    source: 'observed-thin',
+    now,
+    getAgent,
+    dryRun,
+    buildUpdate: ({ row, evidence }) => {
+      const elapsedMin = (now - row.ts) / 60000;
+      const headwayMin =
+        evidence?.headwayMin ?? expectedBusRouteHeadwayMin(row.line, new Date(now));
+      const name = routeNames[row.line];
+      const routeTitle = name ? `#${row.line} ${name}` : `#${row.line}`;
+      return thinGapUpdate({ routeTitle, headwayMin, elapsedMin });
+    },
+  });
 
   const priorHour = new Date(now - HOUR_MS);
   const nextHour = new Date(now + HOUR_MS);

@@ -76,6 +76,7 @@ const {
   recordMetaSignal,
   recentDetectorActivity,
 } = require('../../src/shared/history');
+const { sweepProgressUpdates, trainPulseUpdate } = require('../../src/shared/incidentUpdates');
 const { clearCooldown } = require('../../src/shared/state');
 const { LINE_TO_RAIL_ROUTE } = require('../../src/shared/ctaAlerts');
 const { rolloffOldObservations } = require('../../src/shared/observations');
@@ -941,6 +942,28 @@ async function main() {
       `${tally.skippedDetector} skipped by detector gates, ` +
       `${tally.candidates} dead-segment candidate(s) handed to handleCandidate`,
   );
+
+  // Hourly progress reply for dead segments still open after the clear pass.
+  for (const source of ['observed', 'observed-held']) {
+    await sweepProgressUpdates({
+      kind: 'train',
+      source,
+      now,
+      getAgent: agentGetter,
+      dryRun: DRY_RUN,
+      buildUpdate: ({ row, evidence }) => {
+        const elapsedMin = (now - row.ts) / 60000;
+        return trainPulseUpdate({
+          lineTitle: lineLabel(row.line),
+          fromStation: row.from_station ?? null,
+          toStation: row.to_station ?? null,
+          expectedTrains: evidence?.expectedTrains ?? null,
+          synthetic: evidence?.synthetic === true,
+          elapsedMin,
+        });
+      },
+    });
+  }
 }
 
 // Bug 2: when an entire line goes dark (rail replaced by shuttles, signal
