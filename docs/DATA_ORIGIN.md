@@ -1,10 +1,17 @@
 # Web data origin (R2)
 
-The high-churn public data files (`alerts.json`, `daily-counts.json`, and
-`alerts.csv`) are served from **Cloudflare R2** at
+The public data files are served from **Cloudflare R2** at
 `https://data.chicagotransitalerts.app`, not committed into the Pages repo. This
 removes the every-~7-minutes data commit (and the deploy it triggered) from
 `cta-alert-history`.
+
+The incident data is published as **bounded shards** rather than one growing
+file: `alerts-recent.json` (active + last 93 days), the monthly archive shards
+`alerts/<YYYY-MM>.json`, all-time per-line files `incidents/by-line/<key>.json`,
+the `alerts-index.json` manifest, and precomputed `aggregates.json` — alongside
+`daily-counts.json` and `alerts.csv`. The legacy full-history `alerts.json` is
+still published but deprecated (see the site's `public/data/CHANGELOG.md`); the
+build reassembles it from the shards rather than depending on the published copy.
 
 ## Data flow
 
@@ -12,15 +19,17 @@ removes the every-~7-minutes data commit (and the deploy it triggered) from
 cta-insights (server)                         cta-alert-history (GitHub Pages)
 ─────────────────────                         ────────────────────────────────
 bin/push-web-data.sh                          runtime: client fetch()s
-  export-web.js   -> tmp/web-data/alerts.json     https://data.chicago…/alerts.json
-  export-daily.js -> tmp/web-data/daily-counts     (VITE_DATA_BASE_URL, always fresh)
-  export-csv.js   -> tmp/web-data/alerts.csv
+  export-web.js   -> alerts.json + shards         https://data.chicago…/alerts-recent.json
+    (alerts-recent, alerts/<YYYY-MM>,             (VITE_DATA_BASE_URL, always fresh)
+     by-line, alerts-index, aggregates)
+  export-daily.js -> daily-counts
+  export-csv.js   -> alerts.csv
   cmp vs .last  ── unchanged? stop
         │ changed
-        ├─ rclone copyto … r2web:cta-alert-history-data    build time: scripts/fetch-data.js
-        │   (Cache-Control: max-age=30)           pulls the same files from R2 into
-        └─ POST repository_dispatch ─────────►    public/data/, then vite + postbuild
-            {event_type: data-updated}            prerender OG cards / feed
+        ├─ rclone … r2web:cta-alert-history-data    build time: scripts/fetch-data.js
+        │   (shards tiered; hot files max-age=30)   reassembles all-time alerts.json
+        └─ POST repository_dispatch ─────────►      from the R2 shards into public/data/,
+            {event_type: data-updated}              then vite + postbuild prerender
 ```
 
 - **Live app data** comes straight from R2 — fresh regardless of when the site
