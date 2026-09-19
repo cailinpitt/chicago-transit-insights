@@ -79,6 +79,60 @@ if [ "$changed" -eq 0 ]; then
   exit 0
 fi
 
+# 2b. Publish floor. export-web.js has no lower bound of its own: pointed at a
+#     fresh, empty, or half-restored DB it emits an alerts.json with almost no
+#     incidents, and the rclone below would overwrite the live archive with it.
+#     That is not recoverable from this side — the public site reads R2, not the
+#     DB. So refuse to publish a sudden collapse in incident count, using the
+#     last successful upload as the baseline.
+#       PUSH_WEB_MIN_RATIO           floor as a % of baseline (default 80)
+#       PUSH_WEB_ALLOW_NO_BASELINE=1 permit the first publish on a new host
+#       PUSH_WEB_FORCE=1             publish anyway (a genuine mass deletion)
+MIN_RATIO="${PUSH_WEB_MIN_RATIO:-80}"
+
+count_incidents() {
+  node -e '
+    const Fs = require("node:fs");
+    try {
+      const d = JSON.parse(Fs.readFileSync(process.argv[1], "utf8"));
+      console.log(Array.isArray(d.incidents) ? d.incidents.length : -1);
+    } catch {
+      console.log(-1);
+    }
+  ' "$1"
+}
+
+new_count=$(count_incidents "$WORK/alerts.json")
+if [ "$new_count" -lt 0 ]; then
+  echo "push-web-data: FATAL exported alerts.json is unreadable or has no incidents[]; refusing to publish" >&2
+  exit 1
+fi
+
+if [ -f "$LAST/alerts.json" ]; then
+  base_count=$(count_incidents "$LAST/alerts.json")
+else
+  base_count=-1
+fi
+
+if [ "$base_count" -lt 0 ]; then
+  if [ "${PUSH_WEB_ALLOW_NO_BASELINE:-0}" != "1" ]; then
+    echo "push-web-data: FATAL no baseline in $LAST — refusing to publish $new_count incidents." >&2
+    echo "  This is the fresh-host case (new server, or tmp/ wiped). Confirm the restored DB is" >&2
+    echo "  complete, then re-run once with PUSH_WEB_ALLOW_NO_BASELINE=1 to seed the baseline." >&2
+    exit 1
+  fi
+  echo "push-web-data: no baseline; seeding with $new_count incidents (PUSH_WEB_ALLOW_NO_BASELINE=1)"
+elif [ "$((new_count * 100))" -lt "$((base_count * MIN_RATIO))" ]; then
+  if [ "${PUSH_WEB_FORCE:-0}" = "1" ]; then
+    echo "push-web-data: incident count ${base_count} -> ${new_count} is below the ${MIN_RATIO}% floor; publishing anyway (PUSH_WEB_FORCE=1)."
+  else
+    echo "push-web-data: FATAL incident count collapsed ${base_count} -> ${new_count} (floor ${MIN_RATIO}%); refusing to publish." >&2
+    echo "  Usually means the DB is fresh, half-restored, or HISTORY_DB_PATH points somewhere unexpected." >&2
+    echo "  If the drop is real, re-run with PUSH_WEB_FORCE=1." >&2
+    exit 1
+  fi
+fi
+
 # 3. Upload to R2. High-churn files get a short edge-cache TTL; the client also
 #    revalidates on generated_at / ETag, so 30s bounds worst-case staleness
 #    without hammering origin. Closed-month archive shards get a long TTL since
