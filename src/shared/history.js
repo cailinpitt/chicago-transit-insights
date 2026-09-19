@@ -19,9 +19,12 @@ function db() {
   // Many crons (the observers every minute, the pulse + bunching/gap/ghost
   // detectors) hammer this one file concurrently. WAL lets readers run during a
   // write, but only one writer at a time — so a write can still hit SQLITE_BUSY
-  // ("database is locked") when another process holds the write lock. Wait up to
-  // 15s for it instead of failing the tick outright (default is 5s).
-  _db.pragma('busy_timeout = 15000');
+  // ("database is locked") when another process holds the write lock. Wait
+  // rather than failing the tick outright (SQLite's default is 5s). The bare-ts
+  // rolloff indexes below are the real fix for contention; this is the backstop
+  // for the remaining overlap, and is env-tunable so it can be raised on a
+  // smaller box without a deploy.
+  _db.pragma(`busy_timeout = ${Number(process.env.SQLITE_BUSY_TIMEOUT_MS) || 30000}`);
   _db.exec(`
     CREATE TABLE IF NOT EXISTS bunching_events (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -256,6 +259,14 @@ function db() {
     );
     CREATE INDEX IF NOT EXISTS idx_obs_kind_route_ts
       ON observations(kind, route, ts);
+    -- Bare ts index for the 7-day rolloff. rolloffOldObservations runs from
+    -- setup() on EVERY bin start and does DELETE ... WHERE ts < cutoff. The
+    -- composite index above can't serve a bare ts predicate (ts isn't the
+    -- leftmost column), so without this the DELETE full-scans all ~9.4M rows
+    -- while holding the write lock — long enough to push concurrent writers
+    -- past busy_timeout ("database is locked"). Mirrors the same fix already
+    -- present in atlanta-transit-insights' src/marta/storage.js.
+    CREATE INDEX IF NOT EXISTS idx_obs_ts ON observations(ts);
 
     -- Metra GTFS-realtime TripUpdate snapshots: one row per (snapshot tick,
     -- trip, stop). The substrate for delay computation and inferred-cancellation
@@ -281,6 +292,8 @@ function db() {
       ON metra_trip_updates(trip_id, ts);
     CREATE INDEX IF NOT EXISTS idx_metra_tu_route_ts
       ON metra_trip_updates(route, ts);
+    -- Same bare-ts rationale as idx_obs_ts above (~5.5M rows here).
+    CREATE INDEX IF NOT EXISTS idx_metra_tu_ts ON metra_trip_updates(ts);
 
     CREATE TABLE IF NOT EXISTS accessibility_outages (
       source_id TEXT PRIMARY KEY,
