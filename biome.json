@@ -6,7 +6,15 @@
     "useIgnoreFile": true
   },
   "files": {
-    "includes": ["**", "!node_modules", "!data", "!state", "!tmp", "!**/*.min.js"]
+    "includes": [
+      "**",
+      "!node_modules",
+      "!data",
+      "!state",
+      "!tmp",
+      "!**/*.min.js",
+      "!src/metra/data"
+    ]
   },
   "formatter": {
     "enabled": true,
