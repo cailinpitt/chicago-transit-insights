@@ -6,10 +6,8 @@ require('dotenv').config({ path: require('node:path').join(__dirname, '..', '.en
 
 const { getVehicles } = require('../src/bus/api');
 const { allRoutes: pulseRoutes } = require('../src/bus/routes');
-const { rolloffOldObservations } = require('../src/shared/observations');
 
 async function main() {
-  rolloffOldObservations();
   if (pulseRoutes.length === 0) {
     console.log('No bus routes configured, nothing to observe');
     return;

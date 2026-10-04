@@ -259,13 +259,8 @@ function db() {
     );
     CREATE INDEX IF NOT EXISTS idx_obs_kind_route_ts
       ON observations(kind, route, ts);
-    -- Bare ts index for the 7-day rolloff. rolloffOldObservations runs from
-    -- setup() on EVERY bin start and does DELETE ... WHERE ts < cutoff. The
-    -- composite index above can't serve a bare ts predicate (ts isn't the
-    -- leftmost column), so without this the DELETE full-scans all ~9.4M rows
-    -- while holding the write lock — long enough to push concurrent writers
-    -- past busy_timeout ("database is locked"). Mirrors the same fix already
-    -- present in atlanta-transit-insights' src/marta/storage.js.
+    -- Bare ts index: the composite index above can't serve a bare ts
+    -- predicate (ts isn't the leftmost column). Observations are kept forever.
     CREATE INDEX IF NOT EXISTS idx_obs_ts ON observations(ts);
 
     -- Metra GTFS-realtime TripUpdate snapshots: one row per (snapshot tick,
@@ -273,7 +268,7 @@ function db() {
     -- detection (a scheduled trip whose stops never get a live prediction).
     -- Unlike CTA, Metra binds each scheduled trip_id to live predictions, so we
     -- store the per-stop predicted vs scheduled times directly rather than
-    -- reconstructing service statistically. 7-day rolloff like observations.
+    -- reconstructing service statistically. 7-day rolloff.
     CREATE TABLE IF NOT EXISTS metra_trip_updates (
       ts INTEGER NOT NULL,
       trip_id TEXT NOT NULL,
@@ -600,13 +595,12 @@ function rolloffOld(now = Date.now()) {
       'DELETE FROM cooldowns WHERE (expires_at IS NOT NULL AND expires_at < ?) OR (expires_at IS NULL AND ts < ?)',
     )
     .run(now, cutoff);
-  // meta_signals are noisy near-miss records; 48h matches observations rolloff
-  // since they're only useful for live correlation, not historical analysis.
+  // meta_signals are noisy near-miss records; 48h rolloff since they're only useful for live correlation, not historical analysis.
   db()
     .prepare('DELETE FROM meta_signals WHERE ts < ?')
     .run(now - 2 * DAY_MS);
   // Metra trip-update snapshots are live-detection substrate (delay + inferred
-  // cancellation), not a historical archive — 7-day rolloff like observations.
+  // cancellation), not a historical archive — 7-day rolloff.
   db()
     .prepare('DELETE FROM metra_trip_updates WHERE ts < ?')
     .run(now - 7 * DAY_MS);

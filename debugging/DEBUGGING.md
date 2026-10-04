@@ -112,8 +112,8 @@ event, pull it from the wire: `curl -s https://data.chicagotransitalerts.app/ale
   something wrong, the fix is in the export (`bin/export-web.js`) /
   `src/shared/observationDescribe.js`, then backfilled — not patched in
   cta-alert-history.
-- **`meta_signals` and `observations` roll off at 48h.** Forensics older than
-  that have to come from `gap_events` / `disruption_events` / `roundup_anchors`,
+- **`meta_signals` roll off at 48h.** Forensics older than that have to come
+  from `observations`, `gap_events` / `disruption_events` / `roundup_anchors`,
   which persist.
 - **SSH from a sandboxed shell** may need DNS/Tailscale access the sandbox
   blocks; run these from a normal terminal.

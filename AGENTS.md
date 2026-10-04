@@ -206,7 +206,6 @@ single-file constants — search the relevant `src/{bus,train}/<feature>.js`.
 | Roundup scoring | `bin/incident-roundup.js` | `WINDOW_MS = 30 min`, `SCORE_THRESHOLD = 1.75`, per-source persistence bonus capped at +0.5 |
 | Loop trunk override scope | `src/train/speedmap.js` | `LOOP_TRUNK_LINES = {brn, org, pink, p}` |
 | History rolloff | `src/shared/history.js` | `ROLLOFF_DAYS = 90` |
-| Observation rolloff | `src/shared/observations.js` | `ROLLOFF_MS = 7d` |
 | GTFS staleness | `src/shared/gtfs.js` | `STALE_FATAL_MS = 7d` |
 
 ## Dev commands

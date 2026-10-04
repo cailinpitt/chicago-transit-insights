@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Archive per-incident vehicle-position "tracks" to R2 so event pages can replay
-// a disruption after the raw positions roll off (observations keep only 7 days).
+// a disruption without needing the live DB.
 //
 // Driven off the *published* alerts.json (the authoritative event identity +
 // segment/direction fields), hitting the DB only for raw positions — so a
@@ -41,8 +41,6 @@ const PAD_MS = 5 * 60 * 1000; // pad the window so a train is on screen before/a
 // "incident" and would produce multi-MB tracks. The formation + first hours are
 // the watchable part anyway, so cap the archived window here.
 const MAX_WINDOW_MS = 4 * 60 * 60 * 1000;
-// Observations roll off at 7 days; stay inside that so we never archive a
-// window whose positions are already (partly) gone.
 const RETENTION_MS = (argv['window-days'] ? Number(argv['window-days']) : 6.5) * DAY_MS;
 
 async function loadAlerts() {

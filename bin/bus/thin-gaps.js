@@ -46,13 +46,12 @@ const HOUR_MS = 60 * 60 * 1000;
 const CLEAR_LOOKBACK_MS = 24 * 60 * 60 * 1000;
 
 // Outer bound for the synthetic-clear pass. Firings older than this are left
-// alone — observations roll off at 7d so we can't prove recovery anyway, and
-// a stale incident from a month ago isn't worth retroactively resolving.
+// alone — a stale incident from a month ago isn't worth retroactively resolving.
 const SYNTHETIC_CLEAR_LOOKBACK_MS = 30 * 24 * 60 * 60 * 1000;
 
 // Cross-detector suppression window — mirror of pulse's. A route already
 // reported silent by pulse shouldn't ALSO open a thin-gap. 7d comfortably
-// exceeds any continuous silence and matches the observation roll-off horizon.
+// exceeds any continuous silence.
 const CROSS_DETECTOR_LOOKBACK_MS = 7 * 24 * 60 * 60 * 1000;
 
 function findUnresolvedThinGaps(now, { sinceMs = CLEAR_LOOKBACK_MS, untilMs = 0 } = {}) {

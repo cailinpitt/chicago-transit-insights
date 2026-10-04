@@ -36,7 +36,6 @@ const {
   getLatestBusSnapshot,
   getRecentBusObservationsByRoute,
   countDistinctTsInBusObservations,
-  rolloffOldObservations,
 } = require('../../src/shared/observations');
 
 function clearBusObs() {
@@ -249,9 +248,4 @@ test('recordTrainObservations persists approx + next_station; reads exclude appr
   assert.deepEqual(recentAll.map((r) => r.rn).sort(), ['real', 'recovered']);
 
   clearTrainObs();
-});
-
-test('rolloff cleans up after the test (sanity)', () => {
-  rolloffOldObservations();
-  // No assertion — just confirms the call doesn't throw on our test rows.
 });

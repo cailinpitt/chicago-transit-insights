@@ -129,7 +129,7 @@ Metra uses a separate API token, so it's not on the CTA 100k/day budget.
   `ts, trip_id, route, label, schedule_relationship, stop_id, stop_sequence,
   stop_schedule_relationship, predicted_arr, predicted_dep, delay_sec, vehicle_ts`.
   This is the substrate for delay computation and inferred-cancellation detection.
-  7-day rolloff, like `observations`.
+  7-day rolloff.
 - Helpers: `recordMetraObservations`, `recordMetraTripUpdates`, `getRecentMetraPositions`.
 
 ## Phase 1 — alerts + speedmap (built)

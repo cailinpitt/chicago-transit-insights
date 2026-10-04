@@ -56,7 +56,7 @@ Two scripts feed a SQLite observations table:
 - `scripts/observeBuses.js` — runs every ten minutes, fetches every active vehicle on every active CTA bus route. Bunching, gaps, and pulse all read this snapshot via the cache layer, so this script is the only API call site for the all-routes workload.
 - The bunching/gap detectors also write every vehicle they see into the same table (so we get extra coverage for free).
 
-Each row records `(ts, route, direction, vehicle_id, ...)`. Observations older than 7 days are rolled off; the live ghost detectors only look back one hour.
+Each row records `(ts, route, direction, vehicle_id, ...)`. Observations are kept indefinitely; the live ghost detectors only look back one hour.
 
 ### Step 3 — detecting ghosts
 
@@ -126,7 +126,7 @@ The CTA publishes a schedule. Live vehicle positions are public. The interesting
 
 - `scripts/fetch-gtfs.js` — builds the active-trip index from CTA's published GTFS feed.
 - `scripts/observeBuses.js` — ten-minute live observation poller covering every active CTA bus route.
-- `src/shared/observations.js` — observation storage and roll-off.
+- `src/shared/observations.js` — observation storage.
 - `src/shared/gtfs.js` — index lookup helpers.
 - `src/bus/ghosts.js`, `src/train/ghosts.js` — core detection and gates.
 - `src/shared/ghostFormat.js` — `describeGhost`: shared count + effective-headway phrasing for both bus and train post lines.

@@ -15,7 +15,7 @@ const {
   expectedTrainActiveTrips,
   isTrainLoopLine,
 } = require('../../src/shared/gtfs');
-const { getTrainObservations, rolloffOldObservations } = require('../../src/shared/observations');
+const { getTrainObservations } = require('../../src/shared/observations');
 const { loginTrain, postText } = require('../../src/train/bluesky');
 const { runBin } = require('../../src/shared/runBin');
 const { logDropSummary } = require('../../src/shared/ghostsLog');
@@ -49,8 +49,6 @@ function buildPostThread(events) {
 }
 
 async function main() {
-  rolloffOldObservations();
-
   const now = Date.now();
   const sinceTs = now - WINDOW_MS;
   // Look up schedule at window midpoint; see bin/bus/ghosts.js for why.

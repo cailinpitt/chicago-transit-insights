@@ -1,17 +1,5 @@
 const { getDb } = require('./history');
 
-// Detection only looks back ~1h. 7-day retention covers reply-with-evidence
-// over the visible Bluesky timeline window and lets bus-pulse / bus-alerts
-// PID discovery (KNOWN_PIDS_LOOKBACK_MS) cover low-frequency overnight and
-// weekend-only route variants without special-casing.
-const ROLLOFF_MS = 7 * 24 * 60 * 60 * 1000;
-
-function rolloffOldObservations(now = Date.now()) {
-  getDb()
-    .prepare('DELETE FROM observations WHERE ts < ?')
-    .run(now - ROLLOFF_MS);
-}
-
 // Errors are swallowed so a logger hiccup never breaks the API caller.
 function recordBusObservations(vehicles, now = Date.now()) {
   if (!vehicles || vehicles.length === 0) return;
@@ -444,5 +432,4 @@ module.exports = {
   getRecentTrainPositions,
   getLineCorridorBbox,
   getActiveBusRoutesSince,
-  rolloffOldObservations,
 };

@@ -15,7 +15,7 @@ const {
   expectedActiveTrips,
   loadIndex,
 } = require('../../src/shared/gtfs');
-const { getBusObservations, rolloffOldObservations } = require('../../src/shared/observations');
+const { getBusObservations } = require('../../src/shared/observations');
 const { loginBus, postText } = require('../../src/bus/bluesky');
 const { runBin } = require('../../src/shared/runBin');
 const { logDropSummary } = require('../../src/shared/ghostsLog');
@@ -54,8 +54,6 @@ function buildPostThread(events) {
 }
 
 async function main() {
-  rolloffOldObservations();
-
   const index = loadIndex();
   // Shadow phase: detect across every route, but only post events for the
   // curated `ghostRoutes` list. Lets us compare what a wider rollout would

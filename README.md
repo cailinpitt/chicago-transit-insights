@@ -200,7 +200,7 @@ Every call to `getVehicles` (bus) and `getAllTrainPositions` (train) writes a ro
 Bus routes not touched by bunching or gaps need an explicit observer run to show up in the ghost rollups and bus pulse detection. `scripts/observeBuses.js` handles that, fetching every active CTA route every minute. Bunching, gaps, and pulse all read the resulting snapshot via `getVehiclesCachedOrFresh` (90s cache window) so the observer is the only API call site for the all-routes workload — that keeps the bus tracker under its 100k-call/day quota (~18.7k/day at this cadence). Trains don't need a dedicated observer — one API call returns all 8 lines and other jobs hit the API often enough.
 
 ### History DB and callouts
-`state/history.sqlite` records every detection (posted or cooldown-suppressed) and every observation. Retention is 90 days. Two things feed off it:
+`state/history.sqlite` records every detection (posted or cooldown-suppressed) and every observation. Observations are kept forever; cooldowns roll off after 90 days. Two things feed off it:
 - **Cooldown** — posts for the same route/direction inside a short window are suppressed to avoid spam. Tracked in `state/posted.json`.
 - **Callouts** — each post is annotated with frequency and severity from prior records, e.g. *"3rd Route 66 bunch reported today"* or *"largest gap reported on this line in 30 days"*.
 
@@ -234,7 +234,7 @@ Local state (gitignored, operator-managed):
 | Path | Purpose | Rebuilt by |
 |---|---|---|
 | `state/posted.json` | Cooldown keys + timestamps | each posting job |
-| `state/history.sqlite` | Detections + observations, 90-day window | each posting + observer job |
+| `state/history.sqlite` | Detections + observations (kept forever) | each posting + observer job |
 | `data/gtfs/index.json` | Schedule lookup | `npm run fetch-gtfs` (daily) |
 | `data/signals/chicago.json` | OSM traffic signals | `npm run fetch-signals` (monthly) |
 | `data/patterns/*.json` | Cached bus route patterns (7-day TTL) | populated on demand |

@@ -79,7 +79,6 @@ const {
 const { sweepProgressUpdates, trainPulseUpdate } = require('../../src/shared/incidentUpdates');
 const { clearCooldown } = require('../../src/shared/state');
 const { LINE_TO_RAIL_ROUTE } = require('../../src/shared/ctaAlerts');
-const { rolloffOldObservations } = require('../../src/shared/observations');
 const trainLines = require('../../src/train/data/trainLines.json');
 const trainStations = require('../../src/train/data/trainStations.json');
 
@@ -588,8 +587,6 @@ async function main() {
     console.log(`Skipping pulse before ${MIN_HOUR} AM CT`);
     return;
   }
-
-  rolloffOldObservations();
 
   try {
     await getAllTrainPositions();

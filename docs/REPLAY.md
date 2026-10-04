@@ -8,12 +8,10 @@ the trains pile up, then recover. The frontend component is `EventReplay.jsx`
 
 ## The problem it solves
 
-The raw positions live in `observations`, which **rolls off after 7 days**
-(`src/shared/observations.js`). Incidents, though, keep a permanent permalink
-(90-day timeline + an `/event/:id` page for each). So a replay can't read the
-live DB — for anything older than a week the positions are already gone. The
-fix: **archive each incident's position window to R2 before it rolls off**,
-keyed by the incident's permalink id.
+The raw positions live in `observations` on the server, which the public site
+can't read. Incidents, though, keep a permanent permalink (90-day timeline + an
+`/event/:id` page for each). The fix: **archive each incident's position window
+to R2**, keyed by the incident's permalink id.
 
 ## Data flow
 
@@ -110,8 +108,8 @@ cap. One kernel now covers all four surfaces plus this replay.
 ## What gets archived
 
 Train incidents with a resolvable single line **and** a two-station segment
-(`from` + `to`), whose `onset` is within the retention window (default 6.5 days,
-safely inside the 7-day rolloff). A **manifest** (`state/track-manifest.json`)
+(`from` + `to`), whose `onset` is within the lookback window (default 6.5 days,
+`--window-days` to widen). A **manifest** (`state/track-manifest.json`)
 records which incidents have been archived after they resolved; those are
 immutable and skipped. Active incidents re-upload each run until they resolve
 (capturing the recovery), then finalize. Bus incidents (no schematic) and
@@ -142,5 +140,5 @@ node bin/export-event-tracks.js --dry-run --alerts=/path/to/alerts.json
 
 A dry run reads the live DB but writes only local files and leaves the manifest
 untouched. Run it on the server (the laptop's `history.sqlite` is a stale dev
-artifact). First live run backfills every replayable incident still inside the
-7-day window.
+artifact). First live run backfills every replayable incident inside the
+lookback window.

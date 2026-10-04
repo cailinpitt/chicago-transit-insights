@@ -1,9 +1,9 @@
 // Pure helpers for the event-replay archiver (bin/export-event-tracks.js).
 //
 // A "track" is the compact, per-incident vehicle-position file the frontend's
-// EventReplay animates. We extract it from `observations` (which roll off after
-// 7 days) and park it on R2 keyed by the incident's permalink id, so an event
-// page can replay the disruption long after the raw positions are gone.
+// EventReplay animates. We extract it from `observations` and park it on R2
+// keyed by the incident's permalink id, so an event page can replay the
+// disruption without the live DB.
 //
 // Everything here is a pure function over plain data so it can be unit-tested
 // without a DB, the network, or importing the bin (whose import would run live).

@@ -42,7 +42,6 @@ const {
   getRecentBusObservationsByRoute,
   countDistinctTsInBusObservations,
   getActiveBusRoutesSince,
-  rolloffOldObservations,
   getBusObservations,
 } = require('../../src/shared/observations');
 const { acquireCooldown, clearCooldown } = require('../../src/shared/state');
@@ -71,10 +70,10 @@ const POST_COOLDOWN_MS = 90 * 60 * 1000;
 const MIN_HOUR = 5;
 const MAX_HOUR = 24;
 const POLL_LOOKBACK_MS = 60 * 60 * 1000; // upper bound for observation window
-const KNOWN_PIDS_LOOKBACK_MS = 7 * 24 * 60 * 60 * 1000; // matches obs rolloff
+const KNOWN_PIDS_LOOKBACK_MS = 7 * 24 * 60 * 60 * 1000;
 // Cross-detector suppression window. A route already reported silent by
 // thin-gaps shouldn't ALSO open a pulse blackout. 7d comfortably exceeds any
-// continuous single-route silence and matches the observation roll-off horizon.
+// continuous single-route silence.
 const CROSS_DETECTOR_LOOKBACK_MS = 7 * 24 * 60 * 60 * 1000;
 
 function chicagoHourNow(now = new Date()) {
@@ -460,8 +459,6 @@ async function main() {
     console.log(`bus-pulse: skipping outside ${MIN_HOUR}–${MAX_HOUR} CT (hour=${hour})`);
     return;
   }
-
-  rolloffOldObservations();
 
   // Fresh poll if cache is stale — observeBuses runs */5 in parallel, so
   // most ticks reuse its snapshot.

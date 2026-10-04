@@ -138,7 +138,7 @@ R=/path/to/cta-insights/bin/cron-run.sh
 # table, and rclones gzipped tracks to the same bucket under tracks/. Manifest-
 # skips incidents already archived after they resolved; active ones re-upload
 # until they do. Offset to :09 so it runs after the :00/:15 push refreshes
-# alerts.json, and stays well inside the 7-day observation rolloff. Uses the
+# alerts.json. Uses the
 # same r2web remote as the backups/data push — no new creds. See docs/REPLAY.md.
 9-59/15 *  *  *  *   $R export-event-tracks bin/export-event-tracks.js
 
