@@ -51,6 +51,7 @@ const {
   clearBusPulseState,
   recordDisruption,
   hasObservedClearForPulse,
+  recordUnpostedPulseClear,
   hasUnresolvedCtaAlert,
   getDb,
   recordMetaSignal,
@@ -326,6 +327,9 @@ async function handleClear(route, agentGetter, now) {
   if (clearTicks >= CLEAR_TICKS_TO_RESET) {
     console.log(`[bus/${route}] cleared after ${clearTicks} clean ticks`);
     await postClearReply(route, { ...prior, clear_started_ts: clearStartedTs }, agentGetter);
+    if (!DRY_RUN) {
+      recordUnpostedPulseClear({ kind: 'bus', pulseUri: prior.active_post_uri }, clearStartedTs);
+    }
     if (prior.posted_cooldown_key) clearCooldown(prior.posted_cooldown_key);
     clearBusPulseState(route);
     return;

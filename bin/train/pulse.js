@@ -71,6 +71,7 @@ const {
   clearPulseState,
   recordDisruption,
   hasObservedClearForPulse,
+  recordUnpostedPulseClear,
   hasUnresolvedCtaAlert,
   getDb,
   recordMetaSignal,
@@ -398,6 +399,9 @@ async function handleClear(line, direction, agentGetter, now) {
       { ...prior, clear_started_ts: clearStartedTs },
       agentGetter,
     );
+    if (!DRY_RUN) {
+      recordUnpostedPulseClear({ kind: 'train', pulseUri: prior.active_post_uri }, clearStartedTs);
+    }
     if (prior.posted_cooldown_key) clearCooldown(prior.posted_cooldown_key);
     clearPulseState(line, direction);
     return;
@@ -572,6 +576,34 @@ function priorToUpsertArgs(prior) {
     activePostUri: prior.active_post_uri,
     activePostTs: prior.active_post_ts,
   };
+}
+
+// Deduplicate candidates that describe the same physical segment but were
+// detected via different branch polylines (different direction keys). The
+// Green Line incident at Ridgeland produced two candidates — branch-len92 and
+// branch-len101 — because both branch polylines traverse that area, resulting
+// in two posts in the same thread. Callers sort already-posted directions
+// first so the canonical post is the one handled.
+//
+// A duplicate with its own posted pulse is kept rather than evicted, so it
+// still gets a ✅ once its stretch recovers. Evicting it orphaned the post as
+// a forever-open incident (Green, 2026-09-27 and 2026-10-24).
+function planSegmentDedup(candidates, postedDirs) {
+  const seenDirs = new Set();
+  const seenSegments = new Set();
+  const plan = [];
+  for (const candidate of candidates) {
+    if (seenDirs.has(candidate.direction)) continue;
+    seenDirs.add(candidate.direction);
+    const segKey = `${candidate.fromStation?.name}__${candidate.toStation?.name}`;
+    if (seenSegments.has(segKey)) {
+      plan.push({ action: postedDirs.has(candidate.direction) ? 'keep' : 'evict', candidate });
+      continue;
+    }
+    seenSegments.add(segKey);
+    plan.push({ action: 'handle', candidate });
+  }
+  return { seenDirs, plan };
 }
 
 async function main() {
@@ -895,27 +927,22 @@ async function main() {
       return 0;
     });
 
-    const seenDirs = new Set();
-    const seenSegments = new Set();
-    for (const c of allCandidates) {
-      if (seenDirs.has(c.direction)) continue;
-      seenDirs.add(c.direction);
-
-      // Deduplicate candidates that describe the same physical segment but were
-      // detected via different branch polylines (different direction keys). The
-      // Green Line incident at Ridgeland produced two candidates — branch-len92
-      // and branch-len101 — because both branch polylines traverse that area,
-      // resulting in two posts in the same thread. The sort above puts any
-      // already-posted direction first so the canonical post is preserved.
-      const segKey = `${c.fromStation?.name}__${c.toStation?.name}`;
-      if (seenSegments.has(segKey)) {
+    const { seenDirs, plan } = planSegmentDedup(allCandidates, new Set(activeUriByDir.keys()));
+    for (const { action, candidate: c } of plan) {
+      const seg = `${c.fromStation?.name}→${c.toStation?.name}`;
+      if (action === 'keep') {
         console.log(
-          `[${lineLabel(line)}/${c.direction}] duplicate segment (${c.fromStation?.name}→${c.toStation?.name}) already handled — evicting shadow pulse_state`,
+          `[${lineLabel(line)}/${c.direction}] duplicate segment (${seg}) but has its own open post — keeping pulse_state`,
+        );
+        continue;
+      }
+      if (action === 'evict') {
+        console.log(
+          `[${lineLabel(line)}/${c.direction}] duplicate segment (${seg}) already handled — evicting shadow pulse_state`,
         );
         clearPulseState(line, c.direction);
         continue;
       }
-      seenSegments.add(segKey);
 
       tally.candidates++;
       try {
@@ -1123,6 +1150,7 @@ module.exports = {
   chicagoWeekdayNow,
   stableSegmentTag,
   overlapFraction,
+  planSegmentDedup,
 };
 
 if (require.main === module) runBin(main);

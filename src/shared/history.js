@@ -1232,6 +1232,48 @@ function hasObservedClearForPulse({ kind, pulseUri }) {
   return !!row;
 }
 
+// Close a posted pulse on the web archive without a Bluesky reply. For when
+// its pulse_state is dropped but no ✅ got posted (reply ref unresolvable,
+// missing stations); otherwise the incident stays open forever. Copies the
+// pulse row's line/direction/segment so export-web's exact-match pairing
+// resolves it. No-op if a matching clear already exists.
+function recordUnpostedPulseClear({ kind, pulseUri }, ts = Date.now()) {
+  if (!pulseUri) return false;
+  const pulse = db()
+    .prepare(`
+    SELECT ts, line, direction, from_station, to_station FROM disruption_events
+    WHERE kind = ? AND source IN ('observed', 'observed-held') AND post_uri = ?
+    ORDER BY ts DESC LIMIT 1
+  `)
+    .get(kind, pulseUri);
+  if (!pulse) return false;
+  const cleared = db()
+    .prepare(`
+    SELECT 1 FROM disruption_events
+    WHERE kind = ? AND source = 'observed-clear' AND ts >= ?
+      AND IFNULL(line, '')         = IFNULL(?, '')
+      AND IFNULL(direction, '')    = IFNULL(?, '')
+      AND IFNULL(from_station, '') = IFNULL(?, '')
+      AND IFNULL(to_station, '')   = IFNULL(?, '')
+    LIMIT 1
+  `)
+    .get(kind, pulse.ts, pulse.line, pulse.direction, pulse.from_station, pulse.to_station);
+  if (cleared) return false;
+  recordDisruption(
+    {
+      kind,
+      line: pulse.line,
+      direction: pulse.direction,
+      fromStation: pulse.from_station,
+      toStation: pulse.to_station,
+      source: 'observed-clear',
+      posted: false,
+    },
+    Math.max(ts, pulse.ts),
+  );
+  return true;
+}
+
 // Phase 4 helper — returns up to 10 most recent pulse posts on a line for
 // caller-side scoring (e.g. station-overlap matching).
 function getRecentPulsePostsAll({ kind, line, withinMs }, now = Date.now()) {
@@ -2288,6 +2330,7 @@ module.exports = {
   getRecentPulsePostsAll,
   openSilenceLines,
   hasObservedClearForPulse,
+  recordUnpostedPulseClear,
   hasUnresolvedCtaAlert,
   getPulseState,
   upsertPulseState,
