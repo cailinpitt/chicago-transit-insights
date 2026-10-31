@@ -22,8 +22,9 @@ https://data.chicagotransitalerts.app/positions/{bus,train,metra}/YYYY/MM/YYYY-M
 - Gzipped NDJSON: one JSON object per line, ordered by `ts`.
 - `ts` is when we polled the feed (epoch ms). `vehicle_ts`, where present, is
   the feed's own timestamp for that position.
-- Buses, trains and Metra are each polled about once a minute. Other jobs
-  poll trains too, so train snapshots can be more frequent.
+- Buses are polled about once a minute, Metra about every 30 seconds, and
+  trains at least every 30 seconds. Other jobs poll trains in between, so
+  train snapshots are often closer together.
 - Train rows with `approx: 1` had no usable lat/lon in the feed, so the
   position was filled in from the next station. Leave them out for anything
   that relies on exact positions.
