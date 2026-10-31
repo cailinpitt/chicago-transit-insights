@@ -1,12 +1,19 @@
 # Database backups
 
-The history DB (`state/history.sqlite`, ~900 MB and growing) is the one piece
+The history DB (`state/history.sqlite`) is the one piece
 of irreplaceable state on the server — it can't be rebuilt from the code or the
 CTA feeds. It lives on a single LVM volume with no RAID, so it's backed up
 off-box to **Cloudflare R2** daily.
 
-- `scripts/backup-db.sh` — snapshot → integrity-check → gzip → upload to R2.
+- `scripts/backup-db.sh` — snapshot → drop `observations` → integrity-check → gzip → upload to R2.
 - `scripts/restore-db.sh` — pull a snapshot back down and verify it.
+
+Vehicle positions (`observations`) are **not** in the backup. Finished days
+are archived by `bin/export-positions.js` to `archive/positions/` and to the
+public data bucket, which doubles as their off-box copy (`docs/POSITIONS.md`).
+A restored DB starts with an empty `observations` table, so it loses up to 14
+days of hot-window positions. The archived days are unaffected; the
+detectors' 7-day lookbacks are thin for the first week after a restore.
 
 The snapshot is taken with SQLite's online `.backup`, which is WAL-safe and
 does not block the bots mid-write. A raw `cp` of the `.sqlite` file is **not**

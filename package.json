@@ -28,6 +28,8 @@
     "speedmap:dry": "node bin/bus/speedmap.js --dry-run",
     "recap": "node bin/bus/recap.js",
     "recap:dry": "node bin/bus/recap.js --dry-run",
+    "export-positions": "node bin/export-positions.js",
+    "export-positions:dry": "node bin/export-positions.js --dry-run",
     "train-snapshot": "node bin/train/snapshot.js",
     "train-snapshot:dry": "node bin/train/snapshot.js --dry-run",
     "train-bunching": "node bin/train/bunching.js",

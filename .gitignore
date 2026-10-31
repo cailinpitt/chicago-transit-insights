@@ -8,6 +8,7 @@ cron/healthchecks.env.*
 assets/
 /data/
 /state/
+/archive/
 /tmp/
 *.log
 *.log.[0-9]*

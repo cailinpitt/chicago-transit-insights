@@ -3,8 +3,10 @@
 #
 # Uses SQLite's online `.backup` (WAL-safe — produces a single consistent
 # file with the WAL merged in, without blocking the bots mid-write). The
-# snapshot is integrity-checked, gzipped (~4-5x), and shipped to R2 via
-# rclone. A couple of local copies are kept under tmp/ for fast restores.
+# observations table is dropped from the snapshot (positions are archived
+# separately by bin/export-positions.js, see docs/POSITIONS.md), then it is
+# integrity-checked, gzipped (~4-5x), and shipped to R2 via rclone. A couple of
+# local copies are kept under tmp/ for fast restores.
 #
 # One-time setup (install rclone, create the bucket + token, configure the
 # `r2` remote) is documented in docs/BACKUPS.md. Run from anywhere:
@@ -31,11 +33,17 @@ if [ ! -f "$DB" ]; then
 fi
 
 mkdir -p "$WORKDIR"
+# Don't leave a multi-GB uncompressed snapshot behind if a step fails.
+trap 'rm -f "${WORKDIR}/${OUT}"' ERR
 
 # 1. Consistent online snapshot (merges the WAL; safe while writers run).
 sqlite3 "$DB" ".backup '${WORKDIR}/${OUT}'"
 
-# 2. Verify the snapshot before trusting it — a corrupt backup is worse than
+# 2. Drop vehicle positions from the snapshot only. The live DB is untouched,
+#    and history.js recreates the empty table on a restored copy.
+sqlite3 "${WORKDIR}/${OUT}" 'DROP TABLE IF EXISTS observations; VACUUM;'
+
+# 3. Verify the snapshot before trusting it — a corrupt backup is worse than
 #    none because it hides the fact that you're unprotected.
 if ! sqlite3 "${WORKDIR}/${OUT}" 'PRAGMA integrity_check;' | grep -qx 'ok'; then
   echo "$(date -Is) ERROR: integrity_check failed for ${OUT}" >&2
@@ -43,13 +51,13 @@ if ! sqlite3 "${WORKDIR}/${OUT}" 'PRAGMA integrity_check;' | grep -qx 'ok'; then
   exit 1
 fi
 
-# 3. Compress.
+# 4. Compress.
 gzip -f "${WORKDIR}/${OUT}"
 
-# 4. Ship off-box. --s3-no-check-bucket avoids needing ListBuckets on the token.
+# 5. Ship off-box. --s3-no-check-bucket avoids needing ListBuckets on the token.
 rclone copy "${WORKDIR}/${OUT}.gz" "${REMOTE}/" --s3-no-check-bucket
 
-# 5. Prune local temp copies (keep newest $KEEP_LOCAL).
+# 6. Prune local temp copies (keep newest $KEEP_LOCAL).
 ls -1t "${WORKDIR}"/history-*.sqlite.gz 2>/dev/null \
   | tail -n +"$((KEEP_LOCAL + 1))" \
   | xargs -r rm -f

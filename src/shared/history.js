@@ -260,7 +260,8 @@ function db() {
     CREATE INDEX IF NOT EXISTS idx_obs_kind_route_ts
       ON observations(kind, route, ts);
     -- Bare ts index: the composite index above can't serve a bare ts
-    -- predicate (ts isn't the leftmost column). Observations are kept forever.
+    -- predicate (ts isn't the leftmost column). Also serves the 14-day
+    -- rolloff in bin/export-positions.js.
     CREATE INDEX IF NOT EXISTS idx_obs_ts ON observations(ts);
 
     -- Metra GTFS-realtime TripUpdate snapshots: one row per (snapshot tick,

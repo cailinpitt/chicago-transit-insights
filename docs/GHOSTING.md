@@ -56,7 +56,7 @@ Two scripts feed a SQLite observations table:
 - `scripts/observeBuses.js` — runs every ten minutes, fetches every active vehicle on every active CTA bus route. Bunching, gaps, and pulse all read this snapshot via the cache layer, so this script is the only API call site for the all-routes workload.
 - The bunching/gap detectors also write every vehicle they see into the same table (so we get extra coverage for free).
 
-Each row records `(ts, route, direction, vehicle_id, ...)`. Observations are kept indefinitely; the live ghost detectors only look back one hour.
+Each row records `(ts, route, direction, vehicle_id, ...)`. Observations keep a 14-day hot window (older days are archived, see `docs/POSITIONS.md`); the live ghost detectors only look back one hour.
 
 ### Step 3 — detecting ghosts
 
