@@ -41,8 +41,9 @@ function recordTrainObservations(trains, now = Date.now()) {
   try {
     const stmt = getDb().prepare(`
       INSERT INTO observations
-        (ts, kind, route, direction, vehicle_id, destination, lat, lon, approx, next_station)
-      VALUES (?, 'train', ?, ?, ?, ?, ?, ?, ?, ?)
+        (ts, kind, route, direction, vehicle_id, destination, lat, lon, approx, next_station,
+         heading, vehicle_ts, approaching)
+      VALUES (?, 'train', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     const tx = getDb().transaction((items) => {
       for (const t of items) {
@@ -57,6 +58,9 @@ function recordTrainObservations(trains, now = Date.now()) {
           Number.isFinite(t.lon) ? t.lon : null,
           t.approx ? 1 : 0,
           t.nextStation || t.recoveredFrom || null,
+          Number.isFinite(t.heading) ? t.heading : null,
+          Number.isFinite(t.predictedAt) ? t.predictedAt : null,
+          t.approaching == null ? null : t.approaching ? 1 : 0,
         );
       }
     });

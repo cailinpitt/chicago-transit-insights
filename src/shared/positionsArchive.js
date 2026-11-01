@@ -37,6 +37,10 @@ const SCHEMA = {
     approx:
       '1 when the feed gave no usable lat/lon and the position was filled in from the next station',
     next_station: 'Next station name',
+    heading: 'Heading in degrees (from 2026-11-01)',
+    vehicle_ts: 'Train Tracker prediction-generated time (prdt), epoch ms (from 2026-11-01)',
+    approaching:
+      '1 when Train Tracker flags the train as approaching its next station (from 2026-11-01)',
   },
   metra: {
     ts: 'Poll time, epoch ms',

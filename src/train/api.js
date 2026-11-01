@@ -2,6 +2,7 @@ const axios = require('axios');
 const { recordTrainObservations } = require('../shared/observations');
 const { withRetry } = require('../shared/retry');
 const { findStationByDestination } = require('./findStation');
+const { chicagoWallTime } = require('../shared/chicagoTime');
 
 const BASE = 'https://lapi.transitchicago.com/api/1.0';
 const ALL_LINES = ['red', 'blue', 'brn', 'g', 'org', 'p', 'pink', 'y'];
@@ -46,6 +47,13 @@ const LINE_EMOJI = {
   y: '🟨',
 };
 
+// Train Tracker's "2026-10-31T23:01:08" America/Chicago wall time, as epoch ms.
+function parseTrainTime(s) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})$/.exec(s || '');
+  if (!m) return null;
+  return chicagoWallTime(...m.slice(1).map(Number)).getTime();
+}
+
 function parseTrain(line, raw) {
   return {
     line,
@@ -58,6 +66,8 @@ function parseTrain(line, raw) {
     lat: parseFloat(raw.lat),
     lon: parseFloat(raw.lon),
     heading: parseInt(raw.heading, 10),
+    // When Train Tracker generated this position.
+    predictedAt: parseTrainTime(raw.prdt),
   };
 }
 
@@ -157,6 +167,8 @@ function shortStationName(name) {
 
 module.exports = {
   getAllTrainPositions,
+  parseTrain,
+  parseTrainTime,
   recoverUnpositionedTrain,
   isInChicagoland,
   LINE_COLORS,

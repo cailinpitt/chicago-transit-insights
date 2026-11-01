@@ -1,6 +1,7 @@
 const axios = require('axios');
 const { recordBusObservations, getLatestBusSnapshot } = require('../shared/observations');
 const { withRetry } = require('../shared/retry');
+const { chicagoWallTime } = require('../shared/chicagoTime');
 
 const BUS_BASE = 'https://www.ctabustracker.com/bustime/api/v3';
 
@@ -57,36 +58,11 @@ function parseVehicle(v) {
   };
 }
 
-// Resolves CTA's "20260415 15:52:13" America/Chicago wall-time strings to UTC
-// without a tz library by round-tripping through Intl.DateTimeFormat.
+// CTA's "20260415 15:52:13" America/Chicago wall-time strings.
 function parseBusTime(s) {
   const [d, t] = s.split(' ');
-  const y = +d.slice(0, 4),
-    mo = +d.slice(4, 6),
-    da = +d.slice(6, 8);
   const [h, mi, se] = t.split(':').map(Number);
-  const utcGuess = Date.UTC(y, mo - 1, da, h, mi, se);
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'America/Chicago',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hour12: false,
-  }).formatToParts(new Date(utcGuess));
-  const get = (k) => +parts.find((p) => p.type === k).value;
-  const seenAsUtc = Date.UTC(
-    get('year'),
-    get('month') - 1,
-    get('day'),
-    get('hour'),
-    get('minute'),
-    get('second'),
-  );
-  const offset = utcGuess - seenAsUtc;
-  return new Date(utcGuess + offset);
+  return chicagoWallTime(+d.slice(0, 4), +d.slice(4, 6), +d.slice(6, 8), h, mi, se);
 }
 
 async function getVehicles(routes, { record = true } = {}) {

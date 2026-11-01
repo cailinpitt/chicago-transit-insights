@@ -365,6 +365,9 @@ function db() {
     // train/metra rows.
     ['sched_start_sec', 'INTEGER'],
     ['sched_start_date', 'TEXT'],
+    // Train Tracker `isApp`: the train is approaching its next station. Null
+    // for bus/metra rows and train rows before 2026-11-01.
+    ['approaching', 'INTEGER'],
   ]) {
     if (!obsCols.includes(name)) _db.exec(`ALTER TABLE observations ADD COLUMN ${name} ${type}`);
   }

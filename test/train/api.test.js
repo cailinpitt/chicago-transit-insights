@@ -1,7 +1,12 @@
 const test = require('node:test');
 const assert = require('node:assert');
 
-const { recoverUnpositionedTrain, isInChicagoland } = require('../../src/train/api');
+const {
+  recoverUnpositionedTrain,
+  isInChicagoland,
+  parseTrain,
+  parseTrainTime,
+} = require('../../src/train/api');
 
 // Minimal injectable station table (the real one is line-tagged the same way).
 const STATIONS = [
@@ -55,4 +60,29 @@ test('recoverUnpositionedTrain returns null with no resolvable next station', ()
     ),
     null,
   );
+});
+
+test('parseTrainTime reads prdt as Chicago wall time', () => {
+  assert.strictEqual(parseTrainTime('2026-10-31T23:01:08'), Date.UTC(2026, 10, 1, 4, 1, 8));
+  assert.strictEqual(parseTrainTime('2026-11-02T09:00:00'), Date.UTC(2026, 10, 2, 15, 0, 0));
+  assert.strictEqual(parseTrainTime(undefined), null);
+  assert.strictEqual(parseTrainTime('garbage'), null);
+});
+
+test('parseTrain keeps heading, approaching and prediction time', () => {
+  const t = parseTrain('y', {
+    rn: '593',
+    destNm: 'Howard',
+    trDr: '5',
+    nextStaNm: 'Oakton-Skokie',
+    prdt: '2026-10-31T23:01:08',
+    isApp: '1',
+    isDly: '0',
+    lat: '0',
+    lon: '0',
+    heading: '90',
+  });
+  assert.strictEqual(t.heading, 90);
+  assert.strictEqual(t.approaching, true);
+  assert.strictEqual(t.predictedAt, Date.UTC(2026, 10, 1, 4, 1, 8));
 });

@@ -40,7 +40,35 @@ https://data.chicagotransitalerts.app/positions/{bus,train,metra}/YYYY/MM/YYYY-M
   train's (seen often on the Blue Line near O'Hare, flipping back and forth
   every poll), and some train rows are only a few seconds apart, which
   turns small position noise into large speeds. Filter or smooth before
-  computing train speeds.
+  computing train speeds. From 2026-11-01, train rows also carry `heading`,
+  `vehicle_ts` (when Train Tracker generated the position) and `approaching`,
+  which help spot these jumps. They are null in earlier files.
+- `vehicle_id` is only unique within a `route`. Train run numbers repeat
+  across lines (run 1000 can be on Green and Purple at once), and Metra train
+  numbers repeat across lines (often ME and UP-N). Key vehicles on
+  `(route, vehicle_id)`, or `trip_id` for Metra.
+- Metra's feed occasionally lists the same trip twice in one poll, with one
+  copy stuck at an old position (about 7 a day). Deduplicate on
+  `(ts, trip_id)`, keeping the row whose position changes.
+
+### Known gaps
+
+Times are Chicago time. Missing polls mean missing rows, not reduced
+service, so leave these windows out of fleet and headway counts.
+
+| Date | Kinds | Missing |
+|---|---|---|
+| 2026-10-12 | bus | 18:03 to midnight |
+| 2026-10-13 | bus | 14:30 to midnight |
+| 2026-10-14 | bus | 13:34 to midnight |
+| 2026-10-15 | bus | 13:13 to midnight |
+| 2026-10-16 | bus | 13:19 to midnight |
+| 2026-10-17 | bus | 15:51 to midnight |
+| 2026-10-22 | bus, train, metra | 15:37 to 15:48 |
+| 2026-10-30 | bus, train, metra | 17:40 to 18:07 |
+
+Metra has no rows overnight (roughly 01:00 to 04:30) because no trains are
+running; that isn't a gap.
 
 ```sh
 curl -sO https://data.chicagotransitalerts.app/positions/train/2026/10/2026-10-30.ndjson.gz
