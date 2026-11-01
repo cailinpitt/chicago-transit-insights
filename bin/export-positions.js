@@ -173,4 +173,6 @@ async function main() {
   console.log(`rolloff: deleted ${deleted} rows before ${new Date(cutoff).toISOString()}`);
 }
 
-runBin(main);
+if (require.main === module) runBin(main);
+
+module.exports = { ARCHIVE_DIR, loadManifest, saveManifest, sha256, upload };

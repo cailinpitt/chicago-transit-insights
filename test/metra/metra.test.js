@@ -80,7 +80,7 @@ test('parsePosition pulls trip, position, vehicle, and timestamp', () => {
   assert.strictEqual(p.label, '1272');
   assert.strictEqual(p.scheduleRelationship, 'SCHEDULED');
   assert.strictEqual(p.lat, 41.85);
-  assert.strictEqual(p.ts, 1781043109);
+  assert.strictEqual(p.ts, 1781043109000);
 });
 
 test('parsePosition returns null when there is no vehicle payload', () => {

@@ -21,6 +21,10 @@ function longToNum(v) {
   return Number.isNaN(n) ? null : n;
 }
 
+function secondsToMs(sec) {
+  return sec == null ? null : sec * 1000;
+}
+
 // Reverse an enum-values object ({SCHEDULED:0,…}) into name lookups so we store
 // readable strings ('CANCELED') instead of opaque ints. Built once.
 function reverseEnum(enumObj) {
@@ -73,7 +77,8 @@ function parsePosition(entity) {
     lat: Number.isFinite(pos.latitude) ? pos.latitude : null,
     lon: Number.isFinite(pos.longitude) ? pos.longitude : null,
     bearing: Number.isFinite(pos.bearing) ? pos.bearing : null,
-    ts: longToNum(v.timestamp),
+    // Epoch ms, like Bus Tracker; the feed sends seconds.
+    ts: secondsToMs(longToNum(v.timestamp)),
   };
 }
 

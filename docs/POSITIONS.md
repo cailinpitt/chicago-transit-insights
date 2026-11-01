@@ -21,13 +21,26 @@ https://data.chicagotransitalerts.app/positions/{bus,train,metra}/YYYY/MM/YYYY-M
   `America/Chicago`), starting 2026-09-28.
 - Gzipped NDJSON: one JSON object per line, ordered by `ts`.
 - `ts` is when we polled the feed (epoch ms). `vehicle_ts`, where present, is
-  the feed's own timestamp for that position.
+  the feed's own timestamp for that position, also epoch ms. (Metra
+  `vehicle_ts` was in seconds until 2026-11-01; the files from before then
+  were rewritten in ms on that date.)
 - Buses and Metra are polled about every 30 seconds, and trains at least
   every 30 seconds. Other jobs poll trains in between, so train snapshots
   are often closer together. Older bus files were polled about once a minute.
 - Train rows with `approx: 1` had no usable lat/lon in the feed, so the
   position was filled in from the next station. Leave them out for anything
   that relies on exact positions.
+- Train Tracker never gives a position for Howard-bound Yellow Line trains
+  (direction 5). They all come back as `approx: 1` pinned at Oakton-Skokie
+  for the whole trip, which is about half of all Yellow rows. Only
+  Skokie-bound Yellow positions are real.
+- Train Tracker positions are sometimes wrong, so position changes between
+  consecutive rows can imply impossible speeds (over 90 mph). Two causes:
+  the feed sometimes reports the next station's coordinates instead of the
+  train's (seen often on the Blue Line near O'Hare, flipping back and forth
+  every poll), and some train rows are only a few seconds apart, which
+  turns small position noise into large speeds. Filter or smooth before
+  computing train speeds.
 
 ```sh
 curl -sO https://data.chicagotransitalerts.app/positions/train/2026/10/2026-10-30.ndjson.gz
@@ -54,7 +67,9 @@ the 04:17 DB backup:
    day that isn't uploaded yet. A failed run leaves the data in the DB for the
    next night.
 
-Finished days never change, so a day is exported once. To re-export one,
+Finished days don't change, so a day is exported once. The one exception
+so far: on 2026-11-01 `scripts/fix-metra-vehicle-ts.js` rewrote the Metra
+files from before that date to store `vehicle_ts` in ms. To re-export one,
 delete its entry from the manifest and its files from `archive/positions/`.
 
 ```sh

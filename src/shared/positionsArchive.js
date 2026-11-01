@@ -50,11 +50,21 @@ const SCHEMA = {
   },
 };
 
+// Metra vehicle_ts was stored in epoch seconds until 2026-11-01. Any value
+// below this is seconds (as ms it would be 1973).
+const MAX_SECONDS_TS = 1e11;
+
+function metraVehicleTsMs(v) {
+  return Number.isFinite(v) && v < MAX_SECONDS_TS ? v * 1000 : v;
+}
+
 function toRecord(row) {
   const out = {};
   for (const field of Object.keys(SCHEMA[row.kind])) {
     out[field] = field === 'pid' ? row.direction : row[field];
   }
+  if (row.kind === 'metra' && 'vehicle_ts' in out)
+    out.vehicle_ts = metraVehicleTsMs(out.vehicle_ts);
   return out;
 }
 
@@ -142,6 +152,8 @@ module.exports = {
   HOT_WINDOW_DAYS,
   KINDS,
   SCHEMA,
+  MAX_SECONDS_TS,
+  metraVehicleTsMs,
   toRecord,
   addDays,
   chicagoDate,

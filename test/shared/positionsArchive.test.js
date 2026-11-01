@@ -53,6 +53,17 @@ test('toRecord publishes bus direction as pid and drops other kinds’ fields', 
   assert.ok(!('trip_id' in rec));
 });
 
+test('toRecord converts legacy Metra vehicle_ts seconds to ms and leaves ms alone', () => {
+  const base = { kind: 'metra', ts: 1, route: 'BNSF', vehicle_id: '1234', trip_id: 'T1' };
+  assert.strictEqual(toRecord({ ...base, vehicle_ts: 1792213170 }).vehicle_ts, 1792213170000);
+  assert.strictEqual(toRecord({ ...base, vehicle_ts: 1792213170000 }).vehicle_ts, 1792213170000);
+  assert.strictEqual(toRecord({ ...base, vehicle_ts: null }).vehicle_ts, null);
+  assert.strictEqual(
+    toRecord({ ...base, kind: 'bus', vehicle_ts: 1792213160000 }).vehicle_ts,
+    1792213160000,
+  );
+});
+
 test('rolloffCutoff keeps the 14-day window when every old day is uploaded', () => {
   const now = Date.UTC(2026, 9, 31, 17);
   const manifest = {};
