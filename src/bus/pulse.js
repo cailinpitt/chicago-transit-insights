@@ -39,7 +39,7 @@ const COLD_START_GRACE_MS = 6 * 60 * 60 * 1000;
 // nothing new is arriving. If the newest observation across the whole fleet
 // is older than this, treat it as an outage and suppress — a real
 // single-route blackout still leaves fresh data on the other ~90 routes.
-// Snapshots normally land ~1–2 min apart; 5 min is several missed cycles.
+// Snapshots normally land ~30s apart; 5 min is several missed cycles.
 const FEED_STALE_MS = 5 * 60 * 1000;
 
 function clamp(v, lo, hi) {

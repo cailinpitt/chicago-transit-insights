@@ -464,7 +464,7 @@ async function main() {
     return;
   }
 
-  // Fresh poll if cache is stale — observeBuses runs */5 in parallel, so
+  // Fresh poll if cache is stale — observeBuses polls every 30s in parallel, so
   // most ticks reuse its snapshot.
   try {
     await getVehiclesCachedOrFresh(pulseRoutes);

@@ -32,8 +32,8 @@ const { setup, runBin } = require('../../src/shared/runBin');
 // space and a single chronically-down route shouldn't dominate the feed.
 const DAILY_CAP_KEY_TTL_MS = 24 * 60 * 60 * 1000;
 
-// Observation pipeline health check: observeBuses runs */10, so 30 min should
-// see ~3 distinct timestamps. Anything below MIN_HEALTHY_SNAPSHOTS means the
+// Observation pipeline health check: observeBuses polls every 30s, so 30 min
+// should see ~60 distinct timestamps. Anything below MIN_HEALTHY_SNAPSHOTS means the
 // pipeline is broken — bailing out prevents a system-wide observation outage
 // from fanning out into 47 simultaneous false-positive posts.
 const HEALTH_CHECK_WINDOW_MS = 30 * 60 * 1000;

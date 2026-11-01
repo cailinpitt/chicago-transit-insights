@@ -52,8 +52,9 @@ Brief list; deeper rationale in the linked deep-dives.
   and analytics need the row.
 - **Bus reads MUST use `getVehiclesCachedOrFresh`** outside `observeBuses.js`
   and speedmap. Direct `getVehicles` blows the quota.
-- **Don't lower observe-buses below `*` (every minute)** without first
-  re-checking the 100k/day bus tracker cap. `MIN_SNAPSHOTS` in
+- **Don't speed observe-buses past its 30s cadence** (two ticks per `*`
+  firing) without first re-checking the 100k/day bus tracker cap (~37.4k/day
+  now). `MIN_SNAPSHOTS` in
   `src/bus/ghosts.js` and `maxStaleMs` in `src/bus/api.js` are coupled to
   this cadence — move them together if it changes.
 - **Stagger new `*-alerts` / `*-pulse` cron entries**. Same wall minute

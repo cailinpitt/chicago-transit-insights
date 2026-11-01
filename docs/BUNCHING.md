@@ -208,7 +208,7 @@ single polyline to glide along, so motion is a free lat/lon interpolation
 through the shared dropout kernel (`src/shared/videoTracks.js`, `pointAlong` =
 null) — discs ease between observed positions and fade out if a vehicle drops
 from the feed. Built from observation history (the observe loops record
-positions every minute), so the bin doesn't poll live.
+positions every 30s), so the bin doesn't poll live.
 
 ## Why this approach
 

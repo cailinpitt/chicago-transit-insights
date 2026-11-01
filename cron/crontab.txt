@@ -61,9 +61,9 @@ R=/path/to/cta-insights/bin/cron-run.sh
 13-58/15 *  *  *  *  $R bus-thin-gaps    bin/bus/thin-gaps.js
 0       */2 *  *  *  $R bus-speedmap     bin/bus/speedmap.js
 7       *  *  *  *   $R bus-ghosts       bin/bus/ghosts.js
-# observe-buses runs every minute. CTA refreshes every 30s, so 60s misses at
-# most one refresh cycle. 124 routes × 13 chunks × 1440 ticks/day ≈ 18.7k/day,
-# well under the 100k/day cap. bunching/gaps/pulse all read the cache
+# observe-buses polls every 30s (two ticks 30s apart per firing, like
+# observe-trains), matching CTA's 30s refresh. 127 routes = 13 chunks per tick
+# × 2880 ticks/day ≈ 37.4k/day, under the 100k/day cap. bunching/gaps/pulse all read the cache
 # (maxStaleMs=90s) so observe-buses is the only API call site for the
 # all-routes workload.
 *       *  *  *  *   $R observe-buses    scripts/observeBuses.js

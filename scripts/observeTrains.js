@@ -10,13 +10,10 @@ require('../src/shared/env');
 
 const { setup, runBin } = require('../src/shared/runBin');
 const { getAllTrainPositions } = require('../src/train/api');
+const { runTicks: runTicksShared } = require('../src/shared/runTicks');
 
 const TICK_INTERVAL_MS = 30 * 1000;
 const TICKS_PER_RUN = 2;
-
-function defaultSleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 async function defaultTick() {
   try {
@@ -27,18 +24,13 @@ async function defaultTick() {
   }
 }
 
-// Exposed for testing — deps injected so the test can assert call count and
-// inter-tick spacing without sleeping for real.
-async function runTicks({
+function runTicks({
   tick = defaultTick,
-  sleep = defaultSleep,
   ticksPerRun = TICKS_PER_RUN,
   intervalMs = TICK_INTERVAL_MS,
+  ...rest
 } = {}) {
-  for (let i = 0; i < ticksPerRun; i++) {
-    if (i > 0) await sleep(intervalMs);
-    await tick();
-  }
+  return runTicksShared({ tick, ticksPerRun, intervalMs, label: 'observe-trains', ...rest });
 }
 
 async function main() {

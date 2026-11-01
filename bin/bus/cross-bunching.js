@@ -315,7 +315,7 @@ async function main() {
   });
 
   // Timelapse reply is non-fatal — the primary post already went out. Built from
-  // observation history (the observe-buses loop records positions every minute).
+  // observation history (the observe-buses loop records positions every 30s).
   if (posted?.primary?.uri) {
     try {
       const groupOrder = byRoute.map((g) => g.route);

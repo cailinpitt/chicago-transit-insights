@@ -138,7 +138,7 @@ async function getPredictions({ stpid, vid, rt, top }) {
 }
 
 // Returns `{ vehicles, now, source }`. The default 90s maxStaleMs is
-// sized to cover the 60s observeBuses cadence — bunching/gaps/pulse
+// sized to cover the 30s observeBuses cadence with two missed ticks of slack — bunching/gaps/pulse
 // always hit the cache, so observeBuses is the only API call site for the
 // "all routes" workload. The per-vehicle 3-min staleness gate inside the
 // detectors still drops individual stale buses.

@@ -152,7 +152,7 @@ All bin scripts accept `--dry-run` (writes image under `assets/` instead of post
 ### Observers / maintenance
 | Command | Description |
 |---|---|
-| `npm run observe-buses` | Bus observer — fetches every active CTA route and records positions (no posting). Run every minute. |
+| `npm run observe-buses` | Bus observer — fetches every active CTA route and records positions (no posting). Run every minute; polls twice, 30s apart. |
 | `npm run fetch-gtfs` | Rebuild `data/gtfs/index.json`. Run daily. |
 | `npm run fetch-signals` | Rebuild `data/signals/chicago.json` from OpenStreetMap. Run monthly. |
 
