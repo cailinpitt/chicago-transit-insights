@@ -3,7 +3,7 @@
 const Fs = require('node:fs');
 const Path = require('node:path');
 const { performance } = require('node:perf_hooks');
-const { runDuckDb } = require('../src/shared/duckdbCli');
+const { DuckDBInstance } = require('@duckdb/node-api');
 const { KINDS, SCHEMA } = require('../src/shared/positionsArchive');
 const { writeDay, sha256, sqlString } = require('../src/shared/positionsParquet');
 const { localPath, writeJson } = require('../src/shared/positionsPublication');
@@ -28,48 +28,50 @@ async function main() {
   const start = performance.now();
   const files = await writeDay(records(), argv.date, out);
   const seconds = (performance.now() - start) / 1000;
-  const nodePeakRssKib = process.resourceUsage().maxRSS;
-  for (const kind of KINDS) {
-    const file = localPath(out, files[kind].path);
-    const types = { integer: 'BIGINT', number: 'DOUBLE', string: 'VARCHAR' };
-    const columns = Object.entries(SCHEMA[kind].fields)
-      .map(([name, field]) => `${name}: ${sqlString(types[field.type])}`)
-      .join(', ');
-    const source = `read_json(${sqlString(argv[kind])}, format='newline_delimited', columns={${columns}})`;
-    const projection =
-      kind === 'metra'
-        ? '* REPLACE(CASE WHEN vehicle_ts < 1e11 THEN vehicle_ts * 1000 ELSE vehicle_ts END AS vehicle_ts)'
-        : '*';
-    const sql = [];
-    const variants = [
-      ['source_order', ''],
-      ['route_time', 'ORDER BY route, ts, vehicle_id'],
-    ];
-    for (const [name, order] of variants) {
-      const target = Path.join(out, `${kind}-${name}.parquet`);
-      sql.push(`COPY (SELECT ${projection} FROM ${source} ${order}) TO ${sqlString(target)}
-        (FORMAT PARQUET, COMPRESSION ZSTD, COMPRESSION_LEVEL 3, ROW_GROUP_SIZE 122880,
-         KV_METADATA {positions_schema_version: '2'});`);
+  const writerPeakRssKib = process.resourceUsage().maxRSS;
+  const instance = await DuckDBInstance.create(':memory:', {
+    threads: '1',
+    memory_limit: '512MB',
+    temp_directory: Path.join(out, 'spill'),
+  });
+  const connection = await instance.connect();
+  try {
+    for (const kind of KINDS) {
+      const file = localPath(out, files[kind].path);
+      const types = { integer: 'BIGINT', number: 'DOUBLE', string: 'VARCHAR' };
+      const columns = Object.entries(SCHEMA[kind].fields)
+        .map(([name, field]) => `${name}: ${sqlString(types[field.type])}`)
+        .join(', ');
+      const source = `read_json(${sqlString(argv[kind])}, format='newline_delimited', columns={${columns}})`;
+      const projection =
+        kind === 'metra'
+          ? '* REPLACE(CASE WHEN vehicle_ts < 1e11 THEN vehicle_ts * 1000 ELSE vehicle_ts END AS vehicle_ts)'
+          : '*';
+      files[kind].alternative_bytes = {};
+      for (const [name, order] of [
+        ['source_order', ''],
+        ['route_time', 'ORDER BY route, ts, vehicle_id'],
+      ]) {
+        const target = Path.join(out, `${kind}-${name}.parquet`);
+        await connection.run(`COPY (SELECT ${projection} FROM ${source} ${order}) TO ${sqlString(target)}
+          (FORMAT PARQUET, COMPRESSION ZSTD, COMPRESSION_LEVEL 3, ROW_GROUP_SIZE 122880,
+           KV_METADATA {positions_schema_version: '2'})`);
+        files[kind].alternative_bytes[name] = Fs.statSync(target).size;
+      }
+      const result = await connection.runAndReadAll(`SELECT count(DISTINCT row_group_id)
+        FROM parquet_metadata(${sqlString(file)})`);
+      files[kind].row_groups = Number(result.getRows()[0][0]);
     }
-    sql.push(
-      `SELECT count(DISTINCT row_group_id) AS row_groups FROM parquet_metadata(${sqlString(file)});`,
-    );
-    const result = await runDuckDb(sql.join('\n'), {
-      memoryLimit: '512MB',
-      tempDirectory: Path.join(out, 'spill'),
-    });
-    files[kind].alternative_bytes = Object.fromEntries(
-      variants.map(([name]) => [name, Fs.statSync(Path.join(out, `${kind}-${name}.parquet`)).size]),
-    );
-    files[kind].row_groups = result[0].row_groups;
+  } finally {
+    connection.closeSync();
+    instance.closeSync();
   }
   const result = {
     date: argv.date,
     node: process.version,
     platform: `${process.platform}/${process.arch}`,
     seconds,
-    node_peak_rss_kib: nodePeakRssKib,
-    memory_measurement_scope: 'Node parent only; excludes the DuckDB CLI child',
+    writer_peak_rss_kib: writerPeakRssKib,
     duckdb_memory_limit: process.env.POSITIONS_MEMORY_LIMIT || '256MB',
     inputs,
     files,

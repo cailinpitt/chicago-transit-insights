@@ -18,11 +18,6 @@ rows, including duplicate multiplicity. The tests separately check input mapping
 nulls, leading-zero identifiers, fractional `pdist`, coordinate precision, physical
 sort order, timestamps, and DST boundaries.
 
-Switching the writer from the npm bindings to the **standalone DuckDB CLI**
-produced **byte-for-byte identical canonical files for all three feeds**: every
-output SHA-256 matches the original PR implementation at `65376ad`. There are
-no new npm dependencies; the server installs the pinned CLI once.
-
 An initial WKB GeoParquet prototype retained latitude/longitude and added a
 21-byte point per usable coordinate. Its sorted bus file was **20,281,917 bytes**
 (the other feeds were 954,674 and 1,167,958). The selected scalar layout avoids
@@ -39,15 +34,14 @@ Do not expect identical sizes across schemas or writer versions.
 
 ## Environment and scope
 
-- Node **22.23.4**, standalone DuckDB CLI **v2.0.0** (`d54cbbe3df`), macOS/arm64.
-- The production writer plus read-back validation took **11.67 seconds** with a
-  **256MB DuckDB memory limit**. Node reported **131,040 KiB peak RSS**, but this
-  measures **only the Node parent, excluding the DuckDB child**; it is not a
-  total-memory measurement or a comparison with the previous in-process writer.
-  The timed section includes parsing the historical inputs, temporary CSV
-  staging, sorting and validation, before the alternate-order benchmarks.
-  The DuckDB buffer limit is not an RSS cap. This is one local run, not a
-  throughput guarantee or a comparison with the old exporter.
+- Node 22.23.4, `@duckdb/node-api` **2.0.0-r.1** (DuckDB **v2.0.0**), macOS/arm64.
+- The production writer plus read-back validation took **10.15 seconds** with a
+  **256MB DuckDB memory limit**; Node reported **464,560 KiB peak process RSS**
+  (about 454 MiB). This includes JSON parsing during the historical-input test,
+  native DuckDB and Node memory, and occurs before alternate-order benchmarks.
+  The buffer limit is not an RSS cap. A prior 512MB-buffer run took 9.47 seconds;
+  canonical output hashes were identical in both settings. Timings are individual
+  local runs, not a throughput guarantee or a comparison with the old exporter.
 - Inputs were already on local disk. Every feed passed independent PyArrow
   **26.0.0** checks for physical column types, schema metadata and row counts;
   pandas **3.1.0** verified ordering; GeoPandas **1.2.0** constructed CRS84 points
@@ -69,9 +63,7 @@ seconds correction. Synthetic tests cover that correction and null coordinates.
 ## Reproduce locally
 
 Use a Node release supported by the repository's native SQLite dependency
-(Node 22 was used here), install dependencies with `npm ci`, and follow
-[server setup](POSITIONS.md#server-setup) to install the pinned CLI and export
-`POSITIONS_DUCKDB_BIN`. Download the
+(Node 22 was used here) and install dependencies with `npm ci`. Download the
 three historical inputs while their old endpoints remain available, or use
 previously saved copies. Match their SHA-256 values to the raw measurements;
 old Metra URLs were once rewritten in place and can have stale cached bytes.
@@ -103,14 +95,10 @@ manifest/latest-pointer publication, retry with no new day, immutable correction
 missing/corrupt state, refusing to drop published history, exclusive locks,
 empty feeds, duplicate records, exact day bounds on both DST transitions,
 source checksum/schema failures, historical cutover, retirement and dry runs.
-CLI tests cover missing/wrong versions, nonzero exits, timeouts, malformed
-output, disabling startup files and extension downloads, and failure before
-publication or SQLite pruning. CSV round-trip cases include quotes, commas,
-line breaks, NUL, Unicode, empty strings and literal null markers.
 Tests use temporary SQLite/Parquet files and an in-memory object-store adapter;
 they do not access production storage. `npm run smoke` verifies existing bin
 imports. The repository's full suite also needs its public GTFS cache:
 `npm run fetch-gtfs`. Stop-matching tests now use explicit synthetic patterns
 instead of requiring an untracked local Bus Tracker cache.
 
-Writer reference: [DuckDB CLI 2.0](https://duckdb.org/docs/2.0/clients/cli/overview).
+Writer reference: [DuckDB Node Neo 2.0](https://duckdb.org/docs/2.0/clients/node_neo/overview).

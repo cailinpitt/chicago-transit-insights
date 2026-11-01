@@ -10,7 +10,6 @@ assets/
 /state/
 /archive/
 /tmp/
-/.tools/duckdb/
 *.log
 *.log.[0-9]*
 .DS_Store

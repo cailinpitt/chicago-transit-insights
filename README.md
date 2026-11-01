@@ -97,11 +97,6 @@ The bus bot tracks a subset of CTA routes — see `src/bus/routes.js`. The train
    npm run bunching:dry
    ```
 
-8. **Set up position archives** — install the pinned DuckDB **2.0.0 CLI** using
-   the checksum-verified instructions in [POSITIONS.md](docs/POSITIONS.md#server-setup).
-   Set `POSITIONS_DUCKDB_BIN` to its absolute path for cron. Archive publication
-   also uses the existing `rclone` setup; it adds no npm dependencies.
-
 ## Running it
 
 Everything is designed to be driven by cron. There's no long-running process — each script does one detection or rollup and exits. The full schedule lives in [`cron/crontab.txt`](cron/crontab.txt). On a fresh server with no other cron jobs you can install it with `crontab cron/crontab.txt`. **On any server that already has unrelated cron jobs**, DO NOT use that destructive form — it replaces every job for the user. Instead, merge between the `# CTA-INSIGHTS-START` / `# CTA-INSIGHTS-END` markers; the file's header has a step-by-step procedure.
@@ -182,9 +177,6 @@ The split keeps `export-web.js` reusable (e.g. dump-to-stdout for ad-hoc inspect
 | `npm run check` | Format + apply safe lint fixes across the whole repo. |
 
 Formatting + safe lint fixes run automatically on `git commit` via a husky pre-commit hook (`.husky/pre-commit` → `lint-staged` → `biome check --write` on staged `*.{js,json}` files only). Config lives in `biome.json`. After cloning, `npm install` runs `prepare` which installs the hook for you.
-
-The full test suite needs the DuckDB CLI from [server setup](docs/POSITIONS.md#server-setup)
-and a fresh public GTFS cache (`npm run fetch-gtfs`). Node 22 was used for validation.
 
 ## How it works
 

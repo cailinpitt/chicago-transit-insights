@@ -182,80 +182,18 @@ list is in the index as `known_gaps`; keep this table in sync with
 Metra has no rows overnight (roughly 01:00 to 04:30) because no trains are
 running; that isn't a gap.
 
-## Server setup
-
-Install the standalone **DuckDB CLI v2.0.0** for the account that runs cron.
-The exporter checks this exact release before writing; development builds and
-other releases are rejected so a server upgrade cannot silently change the
-writer. There is no DuckDB npm dependency or runtime extension download.
-The existing Node/SQLite dependencies and `rclone` configuration are still
-required. Node 22 was used for testing.
-
-Run this from the repository root. It installs a versioned executable in the
-gitignored `.tools/duckdb/` directory without administrator access. The URLs and
-SHA-256 values are from DuckDB's [official 2.0 installation page](https://duckdb.org/docs/2.0/installation/).
-It requires `curl`, `tar`, `install`, and either `sha256sum` or `shasum`.
-
-```sh
-(
-  set -eu
-  case "$(uname -s)/$(uname -m)" in
-    Linux/x86_64)
-      duckdb_platform=linux-amd64
-      duckdb_sha=c6507206baf7793c6013dbd82368469a45f20dc0e17a6f92f204602f652ed2bc ;;
-    Linux/aarch64|Linux/arm64)
-      duckdb_platform=linux-arm64
-      duckdb_sha=859e1875d2a9515fbb4bf8871061437a14af82320da68c753f094c4b776348fe ;;
-    Darwin/arm64|Darwin/x86_64)
-      duckdb_platform=osx-universal
-      duckdb_sha=8a8f67e7c7f7d1392fa63ba3971948391392fe2a25fca63e7008e33c50beb4c2 ;;
-    *) echo 'Unsupported platform; use an official DuckDB v2.0.0 CLI build.' >&2; exit 1 ;;
-  esac
-  duckdb_tmp=$(mktemp -d)
-  trap 'rm -rf "$duckdb_tmp"' 0
-  curl -fL "https://install.duckdb.org/v2.0.0/duckdb-cli-${duckdb_platform}.tar.gz" \
-    -o "$duckdb_tmp/duckdb.tar.gz"
-  if command -v sha256sum >/dev/null 2>&1; then
-    printf '%s  %s\n' "$duckdb_sha" "$duckdb_tmp/duckdb.tar.gz" | sha256sum -c -
-  else
-    printf '%s  %s\n' "$duckdb_sha" "$duckdb_tmp/duckdb.tar.gz" | shasum -a 256 -c -
-  fi
-  tar -xzf "$duckdb_tmp/duckdb.tar.gz" -C "$duckdb_tmp"
-  mkdir -p .tools/duckdb/2.0.0
-  install -m 755 "$duckdb_tmp/duckdb" .tools/duckdb/2.0.0/duckdb
-)
-export POSITIONS_DUCKDB_BIN="$PWD/.tools/duckdb/2.0.0/duckdb"
-"$POSITIONS_DUCKDB_BIN" -no-init -no-agent --version
-printf 'POSITIONS_DUCKDB_BIN=%s\n' "$POSITIONS_DUCKDB_BIN"
-```
-
-Copy the printed absolute `POSITIONS_DUCKDB_BIN` value into the repository's
-`.env` for the cron jobs. Keep it exported in your shell when running tests.
-Alternatively, place exactly v2.0.0 on `PATH`; the default executable is `duckdb`.
-Do not use a rolling package-manager release for this pinned writer.
-
-The CLI runs without a shell, startup files or interactive/agent output, and
-with automatic extension loading and installation disabled. Missing executables,
-version mismatches, nonzero exits, invalid output and timeouts abort the write
-before publication or pruning. Each invocation has a ten-minute timeout; adjust
-`POSITIONS_DUCKDB_TIMEOUT_MS` if the deployment host needs longer.
-
-The writer uses one thread and a `256MB` DuckDB memory limit (override with
-`POSITIONS_MEMORY_LIMIT`). This is a DuckDB buffer limit, not a total process RSS
-limit. Leave disk space for temporary CSV, the staging database, sorting spill
-and permanent archives; days are processed sequentially. Staging files are
-removed on success or a handled failure. After a machine/process crash, remove
-abandoned `.parquet-*` directories only after confirming no writer is running.
-Validate resources on the deployment host before enabling the daily cron.
-
 ## Daily publication and retention
 
 `bin/export-positions.js` runs at 02:40, before the 04:17 database backup.
-It reads completed days from SQLite with the existing `better-sqlite3` dependency
-and validates each row. Bounded buffers write private CSV staging files, which
-the pinned CLI imports with explicit types and null handling into a disk-backed
-DuckDB database. It then sorts, writes and verifies Parquet. There is no schema
-inference, SQLite extension or published CSV/NDJSON intermediate.
+It reads completed days directly from SQLite with `better-sqlite3`, appends typed
+rows to a disk-backed DuckDB staging database, and sorts/writes Parquet. The
+pinned `@duckdb/node-api` release bundles DuckDB; production needs no external
+DuckDB CLI, extension download, query service or NDJSON intermediate.
+
+The writer uses one thread and a `256MB` DuckDB memory limit (override with
+`POSITIONS_MEMORY_LIMIT`). This is a DuckDB buffer limit, not a total process RSS
+limit. Leave disk space for staging/spill and the permanent archive; process
+feeds/days sequentially. Validate resources on the deployment host.
 
 1. Validate schema and partition boundaries. Write into a temporary directory.
 2. Read back each file and compare every field with **symmetric `EXCEPT ALL`**,

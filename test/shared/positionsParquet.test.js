@@ -6,7 +6,7 @@ const Path = require('node:path');
 const Zlib = require('node:zlib');
 const Crypto = require('node:crypto');
 const Database = require('better-sqlite3');
-const { runDuckDb } = require('../../src/shared/duckdbCli');
+const { DuckDBInstance } = require('@duckdb/node-api');
 const {
   KINDS,
   SCHEMA,
@@ -133,7 +133,14 @@ function fakeStore() {
 }
 
 async function query(sql) {
-  return (await runDuckDb(sql)).map((row) => Object.values(row));
+  const instance = await DuckDBInstance.create(':memory:', { threads: '1' });
+  const connection = await instance.connect();
+  try {
+    return (await connection.runAndReadAll(sql)).getRows();
+  } finally {
+    connection.closeSync();
+    instance.closeSync();
+  }
 }
 
 test('direct SQLite export preserves typed records, duplicates, quality flags and physical sort order', async (t) => {
@@ -223,20 +230,9 @@ test('invalid coordinates remain unchanged and are counted in quality metadata',
   );
   assert.equal(files.bus.quality.invalid_coordinate_rows, 6);
   const values = await query(
-    `SELECT lat::VARCHAR AS lat, lon::VARCHAR AS lon FROM read_parquet(${sqlString(localPath(outDir, files.bus.path))}) ORDER BY vehicle_id`,
+    `SELECT lat, lon FROM read_parquet(${sqlString(localPath(outDir, files.bus.path))}) ORDER BY vehicle_id`,
   );
-  const number = (value) =>
-    value === null
-      ? null
-      : value === 'inf'
-        ? Infinity
-        : value === '-inf'
-          ? -Infinity
-          : Number(value);
-  assert.deepEqual(
-    values.map((row) => row.map(number)),
-    coordinates,
-  );
+  assert.deepEqual(values, coordinates);
 });
 
 for (const date of ['2026-03-08', '2026-11-01']) {
@@ -527,66 +523,4 @@ test('retirement refuses a rolled-back index and resumes after a delete/save int
   store.remove = remove;
   await migrate({ ...paths, store, retire: true });
   assert.ok(readJson(paths.manifestPath).days[DATE].sources.bus.retired_at);
-});
-
-test('CLI staging preserves quotes, delimiters, line breaks, NUL, Unicode, empty strings and literal null markers', async (t) => {
-  const paths = setup(t);
-  const outDir = Path.join(paths.root, `archive's "quoted" directory`);
-  const values = [
-    null,
-    '',
-    '\\N',
-    'NULL',
-    'a,b',
-    'a"b',
-    'a\nb',
-    'a\r\nb',
-    'a\rb',
-    '\tα🚌\u0000',
-    "'); .shell echo unexpected",
-  ];
-  const rows = values.map((destination, i) => ({
-    ...fixtureRows()[0],
-    vehicle_id: String(i).padStart(3, '0'),
-    destination,
-  }));
-  const files = await writeDay(rows, DATE, outDir);
-  const readback = await query(
-    `SELECT destination FROM read_parquet(${sqlString(localPath(outDir, files.bus.path))}) ORDER BY vehicle_id`,
-  );
-  assert.deepEqual(
-    readback.map(([value]) => value),
-    values,
-  );
-  assert.equal(
-    Fs.readdirSync(outDir).some((name) => name.startsWith('.parquet-')),
-    false,
-  );
-});
-
-test('a failed DuckDB child cannot publish files or prune SQLite', async (t) => {
-  const paths = setup(t);
-  const bin = Path.join(paths.root, 'failing-duckdb');
-  Fs.writeFileSync(
-    bin,
-    `#!${process.execPath}\nif (process.argv.includes('--version')) { console.log('v2.0.0 test'); } else { process.exitCode = 23; }\n`,
-    { mode: 0o755 },
-  );
-  const previous = process.env.POSITIONS_DUCKDB_BIN;
-  process.env.POSITIONS_DUCKDB_BIN = bin;
-  t.after(() => {
-    if (previous === undefined) delete process.env.POSITIONS_DUCKDB_BIN;
-    else process.env.POSITIONS_DUCKDB_BIN = previous;
-  });
-  makeDb(paths.dbPath, fixtureRows());
-  writeJson(paths.manifestPath, newManifest());
-  const store = fakeStore();
-  await assert.rejects(
-    runExport({ ...paths, store, now: dayBounds('2026-11-11').start, startDate: DATE, limit: 1 }),
-    /failed \(23\)/,
-  );
-  assert.equal(rowCount(paths.dbPath), fixtureRows().length);
-  assert.deepEqual(readJson(paths.manifestPath).days, {});
-  assert.deepEqual(Fs.readdirSync(paths.outDir), []);
-  assert.deepEqual(store.calls, []);
 });
