@@ -115,6 +115,18 @@ function upload(localPath, remotePath, contentType, maxAge) {
   );
 }
 
+// The previous index (old or new format) is merged in so no published day is lost.
+function publishIndex(manifest, now = Date.now()) {
+  Fs.mkdirSync(ARCHIVE_DIR, { recursive: true });
+  const indexPath = Path.join(ARCHIVE_DIR, 'index.json');
+  let previous = null;
+  try {
+    previous = JSON.parse(Fs.readFileSync(indexPath, 'utf8'));
+  } catch (_) {}
+  Fs.writeFileSync(indexPath, `${JSON.stringify(buildIndex(manifest, now, previous), null, 2)}\n`);
+  upload(indexPath, 'positions/index.json', 'application/json', 300);
+}
+
 function deleteBefore(db, cutoff) {
   const oldest = db.prepare('SELECT MIN(ts) AS ts FROM observations').get().ts;
   if (oldest == null || oldest >= cutoff) return 0;
@@ -160,10 +172,7 @@ async function main() {
   }
 
   if (days.length > 0 || argv['publish-index']) {
-    Fs.mkdirSync(ARCHIVE_DIR, { recursive: true });
-    const indexPath = Path.join(ARCHIVE_DIR, 'index.json');
-    Fs.writeFileSync(indexPath, `${JSON.stringify(buildIndex(manifest, now), null, 2)}\n`);
-    upload(indexPath, 'positions/index.json', 'application/json', 300);
+    publishIndex(manifest, now);
   }
 
   const db = new Database(DB_PATH);
@@ -175,4 +184,4 @@ async function main() {
 
 if (require.main === module) runBin(main);
 
-module.exports = { ARCHIVE_DIR, loadManifest, saveManifest, sha256, upload };
+module.exports = { ARCHIVE_DIR, loadManifest, saveManifest, sha256, upload, publishIndex };

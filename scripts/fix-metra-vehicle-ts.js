@@ -12,18 +12,14 @@ const Database = require('better-sqlite3');
 const argv = require('minimist')(process.argv.slice(2));
 
 const { runBin } = require('../src/shared/runBin');
-const {
-  MAX_SECONDS_TS,
-  metraVehicleTsMs,
-  filePath,
-  buildIndex,
-} = require('../src/shared/positionsArchive');
+const { MAX_SECONDS_TS, metraVehicleTsMs, filePath } = require('../src/shared/positionsArchive');
 const {
   ARCHIVE_DIR,
   loadManifest,
   saveManifest,
   sha256,
   upload,
+  publishIndex,
 } = require('../bin/export-positions');
 
 const DB_PATH =
@@ -103,9 +99,7 @@ async function main() {
     console.log(`files: ${dryRun ? 'dry run' : 'nothing to rewrite'}`);
     return;
   }
-  const indexPath = Path.join(ARCHIVE_DIR, 'index.json');
-  Fs.writeFileSync(indexPath, `${JSON.stringify(buildIndex(manifest), null, 2)}\n`);
-  upload(indexPath, 'positions/index.json', 'application/json', 300);
+  publishIndex(manifest);
   console.log(`files: rewrote and uploaded ${rewritten}, republished index.json`);
 }
 

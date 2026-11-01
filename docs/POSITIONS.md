@@ -10,8 +10,52 @@ is also published for anyone to download.
 
 Index: <https://data.chicagotransitalerts.app/positions/index.json>
 
-The index lists every archived day with each file's path, row count, size and
-sha256, plus the field list for each kind. Files are at:
+The index starts with metadata (time zone, format, `base_url`, which `path`
+values are relative to, and `coverage`), then each feed's fields with type,
+unit, nullability and the date a field was added (`since`), then
+`known_gaps`, then `days`, **newest first**. Each day has a `rows` summary per
+feed and each file's path, row count, size and sha256:
+
+```json
+{
+  "title": "CTA vehicle positions archive",
+  "generated_at": "2026-11-01T08:40:01.646Z",
+  "timezone": "America/Chicago",
+  "days_are": "Local calendar days in `timezone`, midnight to midnight",
+  "format": "gzipped NDJSON, one JSON object per line, ordered by ts",
+  "base_url": "https://data.chicagotransitalerts.app/",
+  "coverage": { "first": "2026-09-28", "latest": "2026-10-31", "days": 34 },
+  "feeds": {
+    "bus": {
+      "description": "CTA Bus Tracker vehicle positions",
+      "fields": {
+        "ts": { "type": "integer", "unit": "epoch ms", "nullable": false, "description": "Poll time" },
+        ...
+      }
+    },
+    ...
+  },
+  "known_gaps": [
+    { "start": "2026-10-12T18:03-05:00", "end": "2026-10-13T00:00-05:00", "feeds": ["bus"], "note": "..." },
+    ...
+  ],
+  "days": [
+    {
+      "date": "2026-10-31",
+      "weekday": "Sat",
+      "rows": { "bus": 787256, "train": 226525, "metra": 47132 },
+      "files": {
+        "bus": { "path": "positions/bus/2026/10/2026-10-31.ndjson.gz", "rows": 787256, "bytes": 0, "sha256": "..." },
+        ...
+      }
+    },
+    ...
+  ]
+}
+```
+
+Fields and gaps are defined in `src/shared/positionsArchive.js` (`SCHEMA`,
+`KNOWN_GAPS`). Files are at:
 
 ```
 https://data.chicagotransitalerts.app/positions/{bus,train,metra}/YYYY/MM/YYYY-MM-DD.ndjson.gz
@@ -54,18 +98,20 @@ https://data.chicagotransitalerts.app/positions/{bus,train,metra}/YYYY/MM/YYYY-M
 ### Known gaps
 
 Times are Chicago time. Missing polls mean missing rows, not reduced
-service, so leave these windows out of fleet and headway counts.
+service, so leave these windows out of fleet and headway counts. The same
+list is in the index as `known_gaps`; keep this table in sync with
+`KNOWN_GAPS` (a test checks).
 
-| Date | Kinds | Missing |
-|---|---|---|
-| 2026-10-12 | bus | 18:03 to midnight |
-| 2026-10-13 | bus | 14:30 to midnight |
-| 2026-10-14 | bus | 13:34 to midnight |
-| 2026-10-15 | bus | 13:13 to midnight |
-| 2026-10-16 | bus | 13:19 to midnight |
-| 2026-10-17 | bus | 15:51 to midnight |
-| 2026-10-22 | bus, train, metra | 15:37 to 15:48 |
-| 2026-10-30 | bus, train, metra | 17:40 to 18:07 |
+| Date | Kinds | Missing | Note |
+|---|---|---|---|
+| 2026-10-12 | bus | 18:03 to midnight | CTA Bus Tracker daily request limit hit; data unrecoverable |
+| 2026-10-13 | bus | 14:30 to midnight | CTA Bus Tracker daily request limit hit; data unrecoverable |
+| 2026-10-14 | bus | 13:34 to midnight | CTA Bus Tracker daily request limit hit; data unrecoverable |
+| 2026-10-15 | bus | 13:13 to midnight | CTA Bus Tracker daily request limit hit; data unrecoverable |
+| 2026-10-16 | bus | 13:19 to midnight | CTA Bus Tracker daily request limit hit; data unrecoverable |
+| 2026-10-17 | bus | 15:51 to midnight | CTA Bus Tracker daily request limit hit; data unrecoverable |
+| 2026-10-22 | bus, train, metra | 15:37 to 15:48 | No polls recorded |
+| 2026-10-30 | bus, train, metra | 17:40 to 18:07 | No polls recorded |
 
 Metra has no rows overnight (roughly 01:00 to 04:30) because no trains are
 running; that isn't a gap.
@@ -90,7 +136,7 @@ the 04:17 DB backup:
    to `archive/positions/` (the permanent copy on the server).
 2. It uploads the files to `r2web:cta-alert-history-data/positions/` and
    records them in `state/positions-manifest.json`. `positions/index.json` is
-   rebuilt from the manifest.
+   rebuilt from the manifest, keeping any day the previous index listed.
 3. It deletes `observations` rows older than 14 days, but never past the first
    day that isn't uploaded yet. A failed run leaves the data in the DB for the
    next night.

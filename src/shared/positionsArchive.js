@@ -9,50 +9,99 @@ const START_DATE = '2026-09-28';
 const HOT_WINDOW_DAYS = 14;
 const KINDS = ['bus', 'train', 'metra'];
 
-// Published field lists per kind. `ts` is when we polled the feed (epoch ms);
+const BASE_URL = 'https://data.chicagotransitalerts.app/';
+
+const f = (type, description, extra = {}) => ({
+  type,
+  ...(extra.unit && { unit: extra.unit }),
+  nullable: !!extra.nullable,
+  description,
+  ...(extra.since && { since: extra.since }),
+});
+
+const POLL_TS = f('integer', 'Poll time', { unit: 'epoch ms' });
+
+// Published fields per kind, in file order. `ts` is when we polled the feed;
 // `vehicle_ts` is the feed's own timestamp for the position, when it has one.
 const SCHEMA = {
   bus: {
-    ts: 'Poll time, epoch ms',
-    route: 'CTA bus route (e.g. "66")',
-    pid: 'CTA pattern id (route variant + direction)',
-    vehicle_id: 'Bus number',
-    destination: 'Headsign destination',
-    lat: 'Latitude',
-    lon: 'Longitude',
-    pdist: 'Feet travelled along the pattern',
-    heading: 'Heading in degrees',
-    vehicle_ts: 'Bus Tracker position timestamp, epoch ms',
-    sched_start_sec: 'Scheduled trip start, seconds after midnight',
-    sched_start_date: 'Scheduled trip service date (YYYYMMDD)',
+    description: 'CTA Bus Tracker vehicle positions',
+    fields: {
+      ts: POLL_TS,
+      route: f('string', 'CTA bus route (e.g. "66")'),
+      pid: f('string', 'CTA pattern id (route variant + direction)', { nullable: true }),
+      vehicle_id: f('string', 'Bus number'),
+      destination: f('string', 'Headsign destination', { nullable: true }),
+      lat: f('number', 'Latitude', { unit: 'degrees', nullable: true }),
+      lon: f('number', 'Longitude', { unit: 'degrees', nullable: true }),
+      pdist: f('number', 'Distance travelled along the pattern', { unit: 'feet', nullable: true }),
+      heading: f('integer', 'Heading', { unit: 'degrees', nullable: true }),
+      vehicle_ts: f('integer', 'Bus Tracker position timestamp', {
+        unit: 'epoch ms',
+        nullable: true,
+      }),
+      sched_start_sec: f('integer', 'Scheduled trip start, after midnight', {
+        unit: 'seconds',
+        nullable: true,
+      }),
+      sched_start_date: f('string', 'Scheduled trip service date (YYYYMMDD)', { nullable: true }),
+    },
   },
   train: {
-    ts: 'Poll time, epoch ms',
-    route: 'CTA rail line (red, blue, brn, g, org, p, pink, y)',
-    direction: 'Train Tracker direction code (1 or 5)',
-    vehicle_id: 'Run number',
-    destination: 'Destination station',
-    lat: 'Latitude',
-    lon: 'Longitude',
-    approx:
-      '1 when the feed gave no usable lat/lon and the position was filled in from the next station',
-    next_station: 'Next station name',
-    heading: 'Heading in degrees (from 2026-11-01)',
-    vehicle_ts: 'Train Tracker prediction-generated time (prdt), epoch ms (from 2026-11-01)',
-    approaching:
-      '1 when Train Tracker flags the train as approaching its next station (from 2026-11-01)',
+    description: 'CTA Train Tracker train positions',
+    fields: {
+      ts: POLL_TS,
+      route: f('string', 'CTA rail line (red, blue, brn, g, org, p, pink, y)'),
+      direction: f('string', 'Train Tracker direction code (1 or 5)', { nullable: true }),
+      vehicle_id: f('string', 'Run number'),
+      destination: f('string', 'Destination station', { nullable: true }),
+      lat: f('number', 'Latitude', { unit: 'degrees', nullable: true }),
+      lon: f('number', 'Longitude', { unit: 'degrees', nullable: true }),
+      approx: f(
+        'integer',
+        '1 when the feed gave no usable lat/lon and the position was filled in from the next station',
+      ),
+      next_station: f('string', 'Next station name', { nullable: true }),
+      heading: f('integer', 'Heading', { unit: 'degrees', nullable: true, since: '2026-11-01' }),
+      vehicle_ts: f('integer', 'Train Tracker prediction-generated time (prdt)', {
+        unit: 'epoch ms',
+        nullable: true,
+        since: '2026-11-01',
+      }),
+      approaching: f(
+        'integer',
+        '1 when Train Tracker flags the train as approaching its next station',
+        { nullable: true, since: '2026-11-01' },
+      ),
+    },
   },
   metra: {
-    ts: 'Poll time, epoch ms',
-    route: 'Metra line id (e.g. "BNSF")',
-    vehicle_id: 'Train label, falling back to vehicle or trip id',
-    lat: 'Latitude',
-    lon: 'Longitude',
-    heading: 'Bearing in degrees',
-    vehicle_ts: 'GTFS-rt position timestamp, epoch ms',
-    trip_id: 'GTFS trip_id, joins to the Metra static schedule',
+    description: 'Metra GTFS-realtime vehicle positions',
+    fields: {
+      ts: POLL_TS,
+      route: f('string', 'Metra line id (e.g. "BNSF")'),
+      vehicle_id: f('string', 'Train label, falling back to vehicle or trip id'),
+      lat: f('number', 'Latitude', { unit: 'degrees', nullable: true }),
+      lon: f('number', 'Longitude', { unit: 'degrees', nullable: true }),
+      heading: f('integer', 'Bearing', { unit: 'degrees', nullable: true }),
+      vehicle_ts: f('integer', 'GTFS-rt position timestamp', { unit: 'epoch ms', nullable: true }),
+      trip_id: f('string', 'GTFS trip_id, joins to the Metra static schedule', { nullable: true }),
+    },
   },
 };
+
+// docs/POSITIONS.md mirrors this list (a test keeps them in sync).
+const BUS_LIMIT_NOTE = 'CTA Bus Tracker daily request limit hit; data unrecoverable';
+const KNOWN_GAPS = [
+  ['2026-10-12T18:03-05:00', '2026-10-13T00:00-05:00', ['bus'], BUS_LIMIT_NOTE],
+  ['2026-10-13T14:30-05:00', '2026-10-14T00:00-05:00', ['bus'], BUS_LIMIT_NOTE],
+  ['2026-10-14T13:34-05:00', '2026-10-15T00:00-05:00', ['bus'], BUS_LIMIT_NOTE],
+  ['2026-10-15T13:13-05:00', '2026-10-16T00:00-05:00', ['bus'], BUS_LIMIT_NOTE],
+  ['2026-10-16T13:19-05:00', '2026-10-17T00:00-05:00', ['bus'], BUS_LIMIT_NOTE],
+  ['2026-10-17T15:51-05:00', '2026-10-18T00:00-05:00', ['bus'], BUS_LIMIT_NOTE],
+  ['2026-10-22T15:37-05:00', '2026-10-22T15:48-05:00', KINDS, 'No polls recorded'],
+  ['2026-10-30T17:40-05:00', '2026-10-30T18:07-05:00', KINDS, 'No polls recorded'],
+].map(([start, end, feeds, note]) => ({ start, end, feeds, note }));
 
 // Metra vehicle_ts was stored in epoch seconds until 2026-11-01. Any value
 // below this is seconds (as ms it would be 1973).
@@ -64,7 +113,7 @@ function metraVehicleTsMs(v) {
 
 function toRecord(row) {
   const out = {};
-  for (const field of Object.keys(SCHEMA[row.kind])) {
+  for (const field of Object.keys(SCHEMA[row.kind].fields)) {
     out[field] = field === 'pid' ? row.direction : row[field];
   }
   if (row.kind === 'metra' && 'vehicle_ts' in out)
@@ -136,16 +185,47 @@ function rolloffCutoff(manifest, now = Date.now(), startDate = START_DATE) {
   return cutoff;
 }
 
-function buildIndex(manifest, generatedAt = Date.now()) {
-  const days = Object.keys(manifest)
-    .filter((date) => manifest[date].uploaded)
-    .sort()
-    .map((date) => ({ date, files: manifest[date].files }));
+function weekday(date) {
+  return new Date(`${date}T12:00:00Z`).toLocaleDateString('en-US', {
+    weekday: 'short',
+    timeZone: 'UTC',
+  });
+}
+
+// Accepts both the current index and the pre-2026-11 one ({ schema, days }
+// oldest first); either way only `date` and `files` are carried over.
+function indexDays(previous) {
+  const out = {};
+  for (const day of previous?.days || []) {
+    if (day?.date && day.files) out[day.date] = day.files;
+  }
+  return out;
+}
+
+// Days come from the manifest, plus any listed in the previous index that the
+// manifest lacks, so a rebuild never drops a published day.
+function buildIndex(manifest, generatedAt = Date.now(), previous = null) {
+  const byDate = indexDays(previous);
+  for (const [date, entry] of Object.entries(manifest)) {
+    if (entry.uploaded) byDate[date] = entry.files;
+  }
+  const dates = Object.keys(byDate).sort().reverse();
+  const days = dates.map((date) => {
+    const files = byDate[date];
+    const rows = {};
+    for (const kind of Object.keys(files)) rows[kind] = files[kind].rows;
+    return { date, weekday: weekday(date), rows, files };
+  });
   return {
+    title: 'CTA vehicle positions archive',
     generated_at: new Date(generatedAt).toISOString(),
     timezone: 'America/Chicago',
+    days_are: 'Local calendar days in `timezone`, midnight to midnight',
     format: 'gzipped NDJSON, one JSON object per line, ordered by ts',
-    schema: SCHEMA,
+    base_url: BASE_URL,
+    coverage: { first: dates.at(-1) ?? null, latest: dates[0] ?? null, days: dates.length },
+    feeds: SCHEMA,
+    known_gaps: KNOWN_GAPS,
     days,
   };
 }
@@ -156,6 +236,8 @@ module.exports = {
   HOT_WINDOW_DAYS,
   KINDS,
   SCHEMA,
+  BASE_URL,
+  KNOWN_GAPS,
   MAX_SECONDS_TS,
   metraVehicleTsMs,
   toRecord,
@@ -166,5 +248,6 @@ module.exports = {
   completedDays,
   filePath,
   rolloffCutoff,
+  indexDays,
   buildIndex,
 };
