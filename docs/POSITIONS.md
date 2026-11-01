@@ -1,73 +1,139 @@
 # Vehicle position archive
 
-Every CTA bus, CTA train and Metra position we poll is written to the
-`observations` table. The table only keeps a **14-day hot window**, enough for
-every detector (the longest lookback is 7 days) and for
-`export-event-tracks` (6.5 days). Older days live in a daily file archive that
-is also published for anyone to download.
+Every CTA bus, CTA train and Metra position we poll enters `observations`.
+SQLite keeps a **14-day hot window**; completed Chicago calendar days are
+archived as **Parquet only**, one file per feed/day/revision. The new contract
+below takes effect when the operator completes the cutover; deploying this
+code alone does not migrate the public archive.
 
-## Getting the data
+## Format and layout
 
-Index: <https://data.chicagotransitalerts.app/positions/index.json>
+- Sort order: **`route, vehicle_id, ts`**, ascending; identifiers sort as strings.
+- ZSTD level 3; requested row groups of 122,880 rows; no outer gzip wrapper.
+- Explicit types: identifiers/dates are strings, timestamps and integer fields
+  are `BIGINT`, coordinates and `pdist` are `DOUBLE`. Coordinates are not rounded.
+- Original fields, nulls and duplicate multiplicities are retained. Earlier
+  train files gain nulls for later nullable fields. Legacy Metra `vehicle_ts`
+  seconds are normalized to milliseconds, as in the previous exporter; the
+  migration ledger counts those changes. `ts` is poll time; `vehicle_ts` is
+  the source position time. Both use epoch milliseconds.
+- `sched_start_date` is **YYYY-MM-DD**, separate from the archive calendar day;
+  `sched_start_sec` may exceed 86,400.
+- Partitions run midnight to midnight in `America/Chicago`, including 23/25-hour
+  DST days. Archive dates start at 2026-09-28. These are calendar days, not
+  necessarily scheduled service dates.
+- Latitude and longitude are retained as scalar columns. Geometry is constructed
+  by GIS consumers when needed. This selects the smallest measured layout;
+  [benchmark results](POSITIONS_BENCHMARK.md) explain the GeoParquet tradeoff.
 
-The index starts with metadata (time zone, format, `base_url`, which `path`
-values are relative to, and `coverage`), then each feed's fields with type,
-unit, nullability and the date a field was added (`since`), then
-`known_gaps`, then `days`, **newest first**. Each day has a `rows` summary per
-feed and each file's path, row count, size and sha256:
+Files have content-addressed URLs:
+
+```text
+https://data.chicagotransitalerts.app/positions/{bus,train,metra}/YYYY/MM/YYYY-MM-DD.{sha256}.parquet
+```
+
+A correction produces a new path; old Parquet objects and manifests remain
+available. `--reexport-date` records the replaced path/checksum. Do not remove
+old Parquet revisions with bucket lifecycle rules.
+
+## Discovery and reproducible downloads
+
+`https://data.chicagotransitalerts.app/positions/index.json` becomes a small
+**version-2 pointer**, rather than the old index's list of days:
 
 ```json
 {
-  "title": "CTA vehicle positions archive",
-  "generated_at": "2026-11-01T08:40:01.646Z",
-  "timezone": "America/Chicago",
-  "days_are": "Local calendar days in `timezone`, midnight to midnight",
-  "format": "gzipped NDJSON, one JSON object per line, ordered by ts",
-  "base_url": "https://data.chicagotransitalerts.app/",
-  "coverage": { "first": "2026-09-28", "latest": "2026-10-31", "days": 34 },
-  "feeds": {
-    "bus": {
-      "description": "CTA Bus Tracker vehicle positions",
-      "fields": {
-        "ts": { "type": "integer", "unit": "epoch ms", "nullable": false, "description": "Poll time" },
-        ...
-      }
-    },
-    ...
-  },
-  "known_gaps": [
-    { "start": "2026-10-12T18:03-05:00", "end": "2026-10-13T00:00-05:00", "feeds": ["bus"], "note": "..." },
-    ...
-  ],
-  "days": [
-    {
-      "date": "2026-10-31",
-      "weekday": "Sat",
-      "rows": { "bus": 787256, "train": 226525, "metra": 47132 },
-      "files": {
-        "bus": { "path": "positions/bus/2026/10/2026-10-31.ndjson.gz", "rows": 787256, "bytes": 0, "sha256": "..." },
-        ...
-      }
-    },
-    ...
-  ]
+  "manifest_version": 2,
+  "path": "positions/manifests/<sha256>.json",
+  "sha256": "<sha256>",
+  "bytes": 12345
 }
 ```
 
-Fields and gaps are defined in `src/shared/positionsArchive.js` (`SCHEMA`,
-`KNOWN_GAPS`). Files are at:
+Resolve `path` relative to `https://data.chicagotransitalerts.app/`, verify its
+bytes/checksum, then read the immutable manifest. It has `manifest_version: 2`,
+`schema_version: 2`, `format: "parquet"`, `compression: "zstd"`, `sort_order`,
+`previous_manifest`, `base_url`, `coverage`, `feeds`, `known_gaps` and `days`
+(newest first). Field types, units, nullability and introduction dates remain
+in `feeds`; see `SCHEMA` in `src/shared/positionsArchive.js`.
 
-```
-https://data.chicagotransitalerts.app/positions/{bus,train,metra}/YYYY/MM/YYYY-MM-DD.ndjson.gz
+Each day has `date`, `weekday`, per-feed `rows`, and `files`. Each file records
+`path`, `format`, `schema_version`, `data_revision` (the SHA-256), `sha256`,
+`bytes`, `rows`, `ts_min`, `ts_max`, `vehicle_ts_min`, `vehicle_ts_max`, `writer`
+and `quality`. Time bounds are inclusive observed extrema, null for no values.
+Quality contains distinct poll times, invalid/missing coordinate row counts,
+and train `approx: 1` row counts. Empty feeds still have a typed Parquet file.
+These counts describe recorded data; they do not assert polling completeness.
+
+Pin the immutable manifest URL for repeatable analysis. Never glob all Parquet
+objects for a day: a directory may contain superseded revisions. The public
+manifest lists one canonical object per feed/day.
+
+Python download and checksum verification (after cutover):
+
+```python
+import hashlib
+import json
+from pathlib import Path
+from urllib.request import Request, urlopen
+import pandas as pd
+
+base = "https://data.chicagotransitalerts.app/"
+def fetch(path):
+    request = Request(base + path, headers={"User-Agent": "positions-parquet-example/1"})
+    with urlopen(request) as response:
+        return response.read()
+
+def verified_bytes(file):
+    body = fetch(file["path"])
+    assert len(body) == file["bytes"]
+    assert hashlib.sha256(body).hexdigest() == file["sha256"]
+    return body
+
+pointer = json.loads(fetch("positions/index.json"))
+assert pointer["manifest_version"] == 2
+manifest = json.loads(verified_bytes(pointer))
+file = manifest["days"][0]["files"]["bus"]
+Path("bus.parquet").write_bytes(verified_bytes(file))
+df = pd.read_parquet("bus.parquet", columns=["route", "vehicle_id", "ts", "lat", "lon"])
 ```
 
-- One file per kind per Chicago service day (midnight to midnight
-  `America/Chicago`), starting 2026-09-28.
-- Gzipped NDJSON: one JSON object per line, ordered by `ts`.
-- `ts` is when we polled the feed (epoch ms). `vehicle_ts`, where present, is
-  the feed's own timestamp for that position, also epoch ms. (Metra
-  `vehicle_ts` was in seconds until 2026-11-01; the files from before then
-  were rewritten in ms on that date.)
+Install `pandas` and `pyarrow` for this example. For large files, stream downloads
+and hashing instead of retaining the downloaded bytes in memory.
+
+DuckDB CLI against that local file (or a manifest-selected HTTPS URL):
+
+```sql
+SELECT route, vehicle_id, to_timestamp(ts / 1000.0) AS poll_time, lat, lon
+FROM read_parquet('bus.parquet')
+WHERE route = '66'
+ORDER BY vehicle_id, ts
+LIMIT 20;
+```
+
+An HTTP reader can fetch selected columns and skip row groups using statistics;
+actual savings depend on the query and host. Route/vehicle/time order favors
+trajectories and compression. A short time window across all routes or an area
+query can still touch many groups. Geometry alone would not add a spatial index.
+
+GIS consumers can construct points with GeoPandas (longitude first):
+
+```python
+import geopandas as gpd
+valid = df["lat"].between(-90, 90) & df["lon"].between(-180, 180)
+gdf = gpd.GeoDataFrame(
+    df.loc[valid].copy(),
+    geometry=gpd.points_from_xy(df.loc[valid, "lon"], df.loc[valid, "lat"]),
+    crs="OGC:CRS84",
+)
+```
+
+For trains, load and retain `approx`; filter `approx == 0` when exact positions
+are required. Constructing a point does not make a station substitute a measured
+position.
+
+## Collection caveats
+
 - Buses and Metra are polled about every 30 seconds, and trains at least
   every 30 seconds. Other jobs poll trains in between, so train snapshots
   are often closer together. Older bus files were polled about once a minute.
@@ -116,45 +182,111 @@ list is in the index as `known_gaps`; keep this table in sync with
 Metra has no rows overnight (roughly 01:00 to 04:30) because no trains are
 running; that isn't a gap.
 
+## Daily publication and retention
+
+`bin/export-positions.js` runs at 02:40, before the 04:17 database backup.
+It reads completed days directly from SQLite with `better-sqlite3`, appends typed
+rows to a disk-backed DuckDB staging database, and sorts/writes Parquet. The
+pinned `@duckdb/node-api` release bundles DuckDB; production needs no external
+DuckDB CLI, extension download, query service or NDJSON intermediate.
+
+The writer uses one thread and a `256MB` DuckDB memory limit (override with
+`POSITIONS_MEMORY_LIMIT`). This is a DuckDB buffer limit, not a total process RSS
+limit. Leave disk space for staging/spill and the permanent archive; process
+feeds/days sequentially. Validate resources on the deployment host.
+
+1. Validate schema and partition boundaries. Write into a temporary directory.
+2. Read back each file and compare every field with **symmetric `EXCEPT ALL`**,
+   including duplicate multiplicity. Validate schema metadata, hash and rename
+   the completed output to its immutable path.
+3. Persist pending state. Upload every feed, then stream remote bytes through
+   SHA-256 and size checks. ETags are not treated as SHA-256.
+4. Upload and verify an immutable manifest. Update and verify `index.json`
+   **last**, then persist the day's committed state.
+5. Delete old observations in hourly batches, stopping at the first day lacking
+   all three verified Parquet files and a committed manifest. An upload or
+   publication error aborts before deletion. Pending publication is retried
+   even when the next run has no new days.
+
+Parquet and immutable manifests use one-year immutable caching. The latest
+pointer uses a five-minute cache. Parquet is served as
+`application/vnd.apache.parquet` without `Content-Encoding: gzip`.
+
 ```sh
-curl -sO https://data.chicagotransitalerts.app/positions/train/2026/10/2026-10-30.ndjson.gz
-gzip -dc 2026-10-30.ndjson.gz | head
+npm run export-positions:dry           # scratch outputs; no upload or DB/state change
+node bin/export-positions.js --limit 3 # at most three unfinished days
+node bin/export-positions.js --publish-index
+node bin/export-positions.js --reexport-date 2026-11-01
 ```
 
-```python
-import pandas as pd
-df = pd.read_json("https://data.chicagotransitalerts.app/positions/bus/2026/10/2026-10-30.ndjson.gz", lines=True)
-```
+Corrections from SQLite are limited to completed days still inside the 14-day
+hot window; older data cannot be rebuilt from a pruned table. For older revisions,
+restore the complete source into a separate database and implement/validate the
+correction before publication; do not remove manifest entries to force a re-export.
+The former in-place `scripts/fix-metra-vehicle-ts.js` repair is retired.
 
-## How it runs
+Overrides remain `HISTORY_DB_PATH`, `POSITIONS_MANIFEST_PATH`,
+`POSITIONS_ARCHIVE_DIR` and `RCLONE_REMOTE`. Daily export and migration share an
+exclusive `<manifest path>.lock`. After a hard crash, confirm the recorded PID
+is gone and no exporter/migration is running before removing a stale lock and
+retrying. Corrupt, missing or legacy state fails closed; restore it rather than
+silently rebuilding pruned history as empty files. An intentionally new archive
+with a complete SQLite history can initialize its state to
+`{"manifest_version":2,"days":{},"published":null}`. Existing archives must migrate.
 
-`bin/export-positions.js` runs nightly at 02:40 (`cron/crontab.txt`), before
-the 04:17 DB backup:
+## One-time migration and cutover
 
-1. For each finished day since 2026-09-28 that isn't uploaded yet, it reads
-   the day from `observations` in a single pass and writes one file per kind
-   to `archive/positions/` (the permanent copy on the server).
-2. It uploads the files to `r2web:cta-alert-history-data/positions/` and
-   records them in `state/positions-manifest.json`. `positions/index.json` is
-   rebuilt from the manifest, keeping any day the previous index listed.
-3. It deletes `observations` rows older than 14 days, but never past the first
-   day that isn't uploaded yet. A failed run leaves the data in the DB for the
-   next night.
-
-Finished days don't change, so a day is exported once. The one exception
-so far: on 2026-11-01 `scripts/fix-metra-vehicle-ts.js` rewrote the Metra
-files from before that date to store `vehicle_ts` in ms. To re-export one,
-delete its entry from the manifest and its files from `archive/positions/`.
+This is a breaking distribution change. The operator coordinates the date and
+updates subscription/download UI code and consumers outside this repository.
+Do not activate the new daily cron against the old manifest until migration
+succeeds. Pause the old daily exporter while migrating; observers can continue.
+The migration does not prune SQLite.
 
 ```sh
-npm run export-positions:dry           # write to tmp/positions-dry-run, no upload or delete
-node bin/export-positions.js --limit 3 # export at most 3 days this run
-node bin/export-positions.js --publish-index  # re-upload index.json only
+npm ci
+npm run migrate-positions                    # stage and verify historical Parquet
+npm run migrate-positions -- --cutover        # verify all replacements; switch index last
+npm run export-positions                     # catch up completed days; enable nightly cron
+# After updating public links/consumers and verifying the public host:
+npm run migrate-positions -- --retire-ndjson
 ```
 
-The DB backup leaves `observations` out (`docs/BACKUPS.md`); the R2 copy of
-the archive is the off-box backup for positions.
+The first command inventories **both** the local legacy manifest and published
+index, including published days absent from local state. It downloads missing
+inputs from the configured bucket, checks original size/SHA-256/row count, streams
+conversion, and rejects unexpected fields. It preserves the old index until
+`--cutover`. Progress is saved in `<manifest path>.parquet-migration`; retries
+reuse validated outputs. A `<manifest path>.ndjson-backup` preserves the old
+metadata, while the new state's per-day `sources` ledger records input and destination checksums,
+validation and timestamp-normalization counts. Metadata backups are not parallel
+NDJSON archives.
 
-Scripts that read `observations` for old incidents (`bin/backfill-*`,
-`scripts/render-*`, `scripts/export-*-fixture*`) only work inside the hot
-window now. For anything older, load the archive files.
+The matching legacy index is saved as `archive/positions/index.ndjson-backup.json`
+(under `POSITIONS_ARCHIVE_DIR` when overridden), including days found only in the
+published index. Keep both metadata backups through the cutover.
+
+Retirement verifies the published manifest and each Parquet replacement again
+before deleting the corresponding old `.ndjson.gz` object and local file. It is
+resumable and records retirement in the ledger. It never deletes superseded
+Parquet revisions. Remove old links and purge or expire cached NDJSON responses
+at the CDN; old endpoints should disappear, not return Parquet under a `.gz` URL.
+No new daily NDJSON producer remains after this change.
+
+Before retiring inputs, test the **actual public Parquet URL** with HEAD, a
+`Range: bytes=0-3` GET (expect `206` and `PAR1`), and a remote DuckDB query. For
+browser consumers check CORS and exposure of `Accept-Ranges`, `Content-Range`,
+`Content-Length` and `ETag`; disable transformations/outer compression. The PR's
+local writer tests and simulated upload failures do not establish production
+CDN or R2 configuration. Related client access compatibility is tracked in #4.
+
+If staging fails, rerun it after fixing the cause; the old index and inputs are
+intact. If the latest-pointer upload succeeds but verification/state saving
+fails, rerun `--cutover`: it recognizes the new pointer and completes state.
+Before retirement, rolling back the cutover requires restoring the old manifest,
+its matching old index and old exporter together. After retirement, restore from
+Parquet; do not restart the legacy exporter over pruned SQLite history.
+
+The DB backup excludes `observations` ([BACKUPS.md](BACKUPS.md)); the verified
+object archive is their off-box copy. Keep local manifest state backed up too.
+Backfill/render scripts that query old incidents in SQLite still only work
+inside the hot window; load manifest-selected Parquet files for older data.

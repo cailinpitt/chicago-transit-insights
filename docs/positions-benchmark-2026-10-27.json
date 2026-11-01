@@ -1,0 +1,121 @@
+{
+  "date": "2026-10-27",
+  "node": "v22.23.4",
+  "platform": "darwin/arm64",
+  "seconds": 10.151498583,
+  "writer_peak_rss_kib": 464560,
+  "duckdb_memory_limit": "256MB",
+  "inputs": {
+    "bus": {
+      "bytes": 38819392,
+      "sha256": "7f726773c2d666de97d672fb4d9f0eff036cb695e6dcac725bc977e6cdbc9d96",
+      "rows": 1069625,
+      "normalized_vehicle_ts": 0
+    },
+    "train": {
+      "bytes": 2569195,
+      "sha256": "47d13b113739a7e7a542debc59e142b5f27de4047e3e1ff01518c2d42b45e069",
+      "rows": 304912,
+      "normalized_vehicle_ts": 0
+    },
+    "metra": {
+      "bytes": 2335354,
+      "sha256": "2dbca544697e8d47bd40f80e5cc6c520ba08b6bb6679d841dbcd2b566670301b",
+      "rows": 112456,
+      "normalized_vehicle_ts": 0
+    }
+  },
+  "files": {
+    "bus": {
+      "path": "positions/bus/2026/10/2026-10-27.32f61373f537f262627af9e4dfb6a3dfe37505e602679f856b4aa0c8fb5d39a4.parquet",
+      "format": "parquet",
+      "schema_version": 2,
+      "data_revision": "32f61373f537f262627af9e4dfb6a3dfe37505e602679f856b4aa0c8fb5d39a4",
+      "sha256": "32f61373f537f262627af9e4dfb6a3dfe37505e602679f856b4aa0c8fb5d39a4",
+      "bytes": 13424677,
+      "rows": 1069625,
+      "ts_min": 1793077204727,
+      "ts_max": 1793163543385,
+      "vehicle_ts_min": 1793076829000,
+      "vehicle_ts_max": 1793163540000,
+      "quality": {
+        "distinct_polls": 1436,
+        "invalid_coordinate_rows": 0,
+        "approx_rows": 0
+      },
+      "writer": {
+        "duckdb": "v2.0.0",
+        "compression": "zstd",
+        "compression_level": 3,
+        "row_group_size": 122880,
+        "sort_order": ["route", "vehicle_id", "ts"]
+      },
+      "alternative_bytes": {
+        "source_order": 16915757,
+        "route_time": 15830877
+      },
+      "row_groups": 9
+    },
+    "train": {
+      "path": "positions/train/2026/10/2026-10-27.1fbe138e552b1e9fd4e0ac939050086a22a080902846ad8f901b6f34544b7ec0.parquet",
+      "format": "parquet",
+      "schema_version": 2,
+      "data_revision": "1fbe138e552b1e9fd4e0ac939050086a22a080902846ad8f901b6f34544b7ec0",
+      "sha256": "1fbe138e552b1e9fd4e0ac939050086a22a080902846ad8f901b6f34544b7ec0",
+      "bytes": 737019,
+      "rows": 304912,
+      "ts_min": 1793077203960,
+      "ts_max": 1793163572869,
+      "vehicle_ts_min": null,
+      "vehicle_ts_max": null,
+      "quality": {
+        "distinct_polls": 6418,
+        "invalid_coordinate_rows": 0,
+        "approx_rows": 2526
+      },
+      "writer": {
+        "duckdb": "v2.0.0",
+        "compression": "zstd",
+        "compression_level": 3,
+        "row_group_size": 122880,
+        "sort_order": ["route", "vehicle_id", "ts"]
+      },
+      "alternative_bytes": {
+        "source_order": 1349634,
+        "route_time": 1080405
+      },
+      "row_groups": 3
+    },
+    "metra": {
+      "path": "positions/metra/2026/10/2026-10-27.b9af07e9d5d6aafe0e8daf026fcfdb61b1b9960df078a4887eb9a90732b3e634.parquet",
+      "format": "parquet",
+      "schema_version": 2,
+      "data_revision": "b9af07e9d5d6aafe0e8daf026fcfdb61b1b9960df078a4887eb9a90732b3e634",
+      "sha256": "b9af07e9d5d6aafe0e8daf026fcfdb61b1b9960df078a4887eb9a90732b3e634",
+      "bytes": 757422,
+      "rows": 112456,
+      "ts_min": 1793077205395,
+      "ts_max": 1793163574423,
+      "vehicle_ts_min": 1793077100000,
+      "vehicle_ts_max": 1793163542000,
+      "quality": {
+        "distinct_polls": 2645,
+        "invalid_coordinate_rows": 0,
+        "approx_rows": 0
+      },
+      "writer": {
+        "duckdb": "v2.0.0",
+        "compression": "zstd",
+        "compression_level": 3,
+        "row_group_size": 122880,
+        "sort_order": ["route", "vehicle_id", "ts"]
+      },
+      "alternative_bytes": {
+        "source_order": 914201,
+        "route_time": 973377
+      },
+      "row_groups": 1
+    }
+  },
+  "validation": "symmetric EXCEPT ALL: zero differences for every feed"
+}
