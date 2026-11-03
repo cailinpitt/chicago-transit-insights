@@ -22,6 +22,7 @@ const {
   localPath,
   verifyLocal,
   rcloneStore,
+  fileStore,
   uploadDay,
   publishIndex,
   withLock,
@@ -88,6 +89,27 @@ function legacyInventory(legacy, previous) {
   return byDate;
 }
 
+async function ensureLocalSource(source, outDir, store) {
+  const local = localPath(outDir, source.path);
+  if (Fs.existsSync(local)) {
+    try {
+      await verifyLocal(local, source);
+      return local;
+    } catch (_) {
+      // A partial or stale local download must not block a safe retry.
+    }
+  }
+  const partial = `${local}.partial`;
+  try {
+    await store.download(source.path, partial);
+    await verifyLocal(partial, source);
+    Fs.renameSync(partial, local);
+  } finally {
+    Fs.rmSync(partial, { force: true });
+  }
+  return local;
+}
+
 async function retireLegacy(manifest, outDir, store, save) {
   if (
     !manifest.published ||
@@ -125,8 +147,9 @@ async function migrate({
   cutover = false,
   retire = false,
   now = Date.now(),
+  allowMissingLegacyManifest = false,
 } = {}) {
-  const legacy = readJson(manifestPath);
+  const legacy = allowMissingLegacyManifest ? readJson(manifestPath, {}) : readJson(manifestPath);
   const save = (value) => writeJson(manifestPath, value);
   if (legacy.manifest_version === 2) {
     if (retire) await retireLegacy(legacy, outDir, store, save);
@@ -160,9 +183,7 @@ async function migrate({
       const sources = structuredClone(inventory[date]);
       for (const kind of KINDS) {
         const source = sources[kind];
-        const local = localPath(outDir, source.path);
-        if (!Fs.existsSync(local)) await store.download(source.path, local);
-        await verifyLocal(local, source);
+        await ensureLocalSource(source, outDir, store);
       }
       async function* records() {
         for (const kind of KINDS) {
@@ -202,7 +223,8 @@ async function migrate({
       for (const file of Object.values(entry.files)) await store.verify(file.path, file);
     }
     const backup = `${manifestPath}.ndjson-backup`;
-    if (!Fs.existsSync(backup)) Fs.copyFileSync(manifestPath, backup, Fs.constants.COPYFILE_EXCL);
+    if (Fs.existsSync(manifestPath) && !Fs.existsSync(backup))
+      Fs.copyFileSync(manifestPath, backup, Fs.constants.COPYFILE_EXCL);
     await publishIndex(manifest, outDir, store, saveStaged, now, {
       days: Object.entries(inventory).map(([date, files]) => ({ date, files })),
     });
@@ -213,8 +235,26 @@ async function migrate({
 
 async function main() {
   const argv = require('minimist')(process.argv.slice(2));
-  await withLock(`${MANIFEST_PATH}.lock`, () =>
+  const localRoot = argv['local-store'] && Path.resolve(argv['local-store']);
+  if (localRoot && (!argv['archive-dir'] || !argv.manifest))
+    throw new Error('--local-store requires --archive-dir and --manifest outside the source store');
+  if (
+    localRoot &&
+    [argv['archive-dir'], argv.manifest].some((path) => {
+      const resolved = Path.resolve(path);
+      return resolved === localRoot || resolved.startsWith(`${localRoot}${Path.sep}`);
+    })
+  )
+    throw new Error('Keep local migration output and state outside --local-store');
+  if (!localRoot && (argv['archive-dir'] || argv.manifest))
+    throw new Error('--archive-dir and --manifest require --local-store');
+  const manifestPath = localRoot ? Path.resolve(argv.manifest) : MANIFEST_PATH;
+  await withLock(`${manifestPath}.lock`, () =>
     migrate({
+      manifestPath,
+      outDir: localRoot ? Path.resolve(argv['archive-dir']) : ARCHIVE_DIR,
+      store: localRoot ? fileStore(localRoot) : rcloneStore(REMOTE),
+      allowMissingLegacyManifest: !!localRoot,
       cutover: !!argv.cutover,
       retire: !!argv['retire-ndjson'],
     }),

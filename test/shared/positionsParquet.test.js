@@ -20,6 +20,7 @@ const {
   writeJson,
   loadManifest,
   localPath,
+  fileStore,
   withLock,
 } = require('../../src/shared/positionsPublication');
 const { runExport } = require('../../bin/export-positions');
@@ -417,6 +418,19 @@ test('migration rejects a corrupt source before publishing replacements', async 
   );
 });
 
+test('migration replaces a partial local source download on retry', async (t) => {
+  const paths = setup(t);
+  const store = fakeStore();
+  const files = await legacyFixture(paths, store);
+  const local = localPath(paths.outDir, files.bus.path);
+  Fs.mkdirSync(Path.dirname(local), { recursive: true });
+  Fs.writeFileSync(local, 'partial download');
+  const result = await migrate({ ...paths, store });
+  assert.equal(result.days[DATE].sources.bus.sha256, files.bus.sha256);
+  assert.equal(hash(Fs.readFileSync(local)), files.bus.sha256);
+  assert.ok(store.calls.some(([op, path]) => op === 'download' && path === files.bus.path));
+});
+
 test('legacy reader propagates malformed gzip/JSON and refuses unknown fields', async (t) => {
   const { root } = setup(t);
   const path = Path.join(root, 'bad.gz');
@@ -471,6 +485,64 @@ test('migration includes a published day missing from the local legacy manifest'
   writeJson(paths.manifestPath, {});
   const result = await migrate({ ...paths, store, cutover: true });
   assert.equal(result.days[DATE].committed, true);
+});
+
+test('local store rehearses a multi-day archive from the published index without legacy local state', async (t) => {
+  const { root, outDir, manifestPath } = setup(t);
+  const storeRoot = Path.join(root, 'object-store');
+  const days = [];
+  for (const date of ['2026-10-27', '2026-11-01']) {
+    const files = {};
+    for (const kind of KINDS) {
+      const records = fixtureRows(date)
+        .filter((row) => row.kind === kind)
+        .map(toRecord);
+      const bytes = Zlib.gzipSync(`${records.map((row) => JSON.stringify(row)).join('\n')}\n`);
+      const path = `positions/${kind}/${date.slice(0, 4)}/${date.slice(5, 7)}/${date}.ndjson.gz`;
+      const local = localPath(Path.join(storeRoot, 'positions'), path);
+      Fs.mkdirSync(Path.dirname(local), { recursive: true });
+      Fs.writeFileSync(local, bytes);
+      files[kind] = { path, rows: records.length, bytes: bytes.length, sha256: hash(bytes) };
+    }
+    days.push({ date, files });
+  }
+  const index = { days };
+  const indexPath = localPath(Path.join(storeRoot, 'positions'), 'positions/index.json');
+  Fs.writeFileSync(indexPath, JSON.stringify(index));
+  const args = {
+    manifestPath,
+    outDir,
+    store: fileStore(storeRoot),
+    allowMissingLegacyManifest: true,
+  };
+  const staged = await migrate(args);
+  assert.equal(Object.keys(staged.days).length, days.length);
+  assert.deepEqual(readJson(indexPath), index);
+  assert.equal(Fs.existsSync(manifestPath), false);
+  await migrate({ ...args, cutover: true });
+  const pointer = readJson(indexPath);
+  const published = readJson(localPath(Path.join(storeRoot, 'positions'), pointer.path));
+  assert.equal(published.coverage.days, days.length);
+  assert.deepEqual(
+    published.days.map((day) => day.date),
+    ['2026-11-01', '2026-10-27'],
+  );
+  for (const day of days) {
+    for (const kind of KINDS) {
+      assert.equal(readJson(manifestPath).days[day.date].files[kind].rows, day.files[kind].rows);
+      assert.ok(Fs.existsSync(localPath(Path.join(storeRoot, 'positions'), day.files[kind].path)));
+    }
+  }
+  await migrate({ ...args, retire: true });
+  for (const day of days) {
+    for (const kind of KINDS) {
+      assert.equal(
+        Fs.existsSync(localPath(Path.join(storeRoot, 'positions'), day.files[kind].path)),
+        false,
+      );
+      assert.ok(readJson(manifestPath).days[day.date].sources[kind].retired_at);
+    }
+  }
 });
 
 test('a malformed row cannot trigger SQLite pruning', async (t) => {
