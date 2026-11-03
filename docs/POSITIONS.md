@@ -178,6 +178,7 @@ list is in the index as `known_gaps`; keep this table in sync with
 | 2026-10-17 | bus | 15:51 to midnight | CTA Bus Tracker daily request limit hit; data unrecoverable |
 | 2026-10-22 | bus, train, metra | 15:37 to 15:48 | No polls recorded |
 | 2026-10-30 | bus, train, metra | 17:40 to 18:07 | No polls recorded |
+| 2026-11-03 | bus, train, metra | 15:28 to 15:29 | Dependency reinstall during deploy |
 
 Metra has no rows overnight (roughly 01:00 to 04:30) because no trains are
 running; that isn't a gap.

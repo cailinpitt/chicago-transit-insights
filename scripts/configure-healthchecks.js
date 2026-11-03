@@ -53,6 +53,8 @@ const CHECKS = {
   'train-speedmap': { period: 120 * M, grace: 90 * M },
   // GTFS refresh, daily at 03:15.
   'fetch-gtfs': { period: 24 * 60 * M, grace: 2 * 60 * M },
+  // Positions archive, daily at 02:40. Gates SQLite pruning, so a silent stall grows the DB.
+  'export-positions': { period: 24 * 60 * M, grace: 2 * 60 * M },
 };
 
 const API = 'https://healthchecks.io/api/v3/checks/';

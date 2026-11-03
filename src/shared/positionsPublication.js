@@ -57,6 +57,8 @@ function rcloneStore(remote) {
           local,
           target(path),
           '--s3-no-check-bucket',
+          // R2 501s rclone's post-upload versioned HEAD; verify() re-hashes remote bytes instead.
+          '--s3-no-head',
           '--ignore-times',
           '--header-upload',
           `Content-Type: ${contentType}`,

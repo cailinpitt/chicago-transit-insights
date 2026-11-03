@@ -104,6 +104,7 @@ const KNOWN_GAPS = [
   ['2026-10-17T15:51-05:00', '2026-10-18T00:00-05:00', ['bus'], BUS_LIMIT_NOTE],
   ['2026-10-22T15:37-05:00', '2026-10-22T15:48-05:00', KINDS, 'No polls recorded'],
   ['2026-10-30T17:40-05:00', '2026-10-30T18:07-05:00', KINDS, 'No polls recorded'],
+  ['2026-11-03T15:28-06:00', '2026-11-03T15:29-06:00', KINDS, 'Dependency reinstall during deploy'],
 ].map(([start, end, feeds, note]) => ({ start, end, feeds, note }));
 
 // Metra vehicle_ts was stored in epoch seconds until 2026-11-01. Any value
