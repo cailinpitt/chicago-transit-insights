@@ -14,6 +14,8 @@ const {
   KINDS,
   SCHEMA,
   KNOWN_GAPS,
+  newManifest,
+  verifiedDay,
 } = require('../../src/shared/positionsArchive');
 
 const HOUR = 60 * 60 * 1000;
@@ -38,8 +40,15 @@ test('completedDays runs from the start date through yesterday in Chicago', () =
   ]);
 });
 
-test('filePath nests by kind, year and month', () => {
-  assert.strictEqual(filePath('bus', '2026-09-28'), 'bus/2026/09/2026-09-28.ndjson.gz');
+test('filePath uses immutable SHA-256 revisions', () => {
+  const hash = 'a'.repeat(64);
+  assert.strictEqual(filePath('bus', '2026-09-28', hash), `bus/2026/09/2026-09-28.${hash}.parquet`);
+  assert.throws(() => filePath('bus', '2026-09-28', 'invalid'));
+});
+
+test('dayBounds spans 23 hours on the spring-forward day', () => {
+  const { start, end } = dayBounds('2026-03-08');
+  assert.strictEqual(end - start, 23 * HOUR);
 });
 
 test('toRecord publishes bus direction as pid and drops other kinds’ fields', () => {
@@ -69,119 +78,73 @@ test('toRecord converts legacy Metra vehicle_ts seconds to ms and leaves ms alon
   );
 });
 
-test('rolloffCutoff keeps the 14-day window when every old day is uploaded', () => {
+function entry(date) {
+  return {
+    verified: true,
+    committed: true,
+    files: Object.fromEntries(
+      KINDS.map((kind) => [
+        kind,
+        {
+          path: `positions/${filePath(kind, date, 'a'.repeat(64))}`,
+          rows: 2,
+          bytes: 100,
+          sha256: 'a'.repeat(64),
+          data_revision: 'a'.repeat(64),
+          format: 'parquet',
+          schema_version: 2,
+        },
+      ]),
+    ),
+  };
+}
+
+test('rolloff requires all feeds verified, committed and included in a publication', () => {
   const now = Date.UTC(2026, 9, 31, 17);
-  const manifest = {};
-  for (const d of completedDays(now, '2026-10-01')) manifest[d] = { uploaded: true };
+  const manifest = newManifest();
+  for (const d of completedDays(now, '2026-10-01')) manifest.days[d] = entry(d);
+  assert.strictEqual(rolloffCutoff(manifest, now, '2026-10-01'), chicagoMidnight('2026-10-01'));
+  manifest.published = { path: 'positions/manifests/test.json' };
   assert.strictEqual(rolloffCutoff(manifest, now, '2026-10-01'), chicagoMidnight('2026-10-17'));
-});
-
-test('rolloffCutoff stops at the first day that is not uploaded', () => {
-  const now = Date.UTC(2026, 9, 31, 17);
-  const manifest = {};
-  for (const d of completedDays(now, '2026-10-01')) manifest[d] = { uploaded: true };
-  manifest['2026-10-05'] = { uploaded: false };
+  for (const failure of ['committed', 'verified']) {
+    manifest.days['2026-10-05'][failure] = false;
+    assert.strictEqual(rolloffCutoff(manifest, now, '2026-10-01'), chicagoMidnight('2026-10-05'));
+    manifest.days['2026-10-05'][failure] = true;
+  }
+  delete manifest.days['2026-10-05'].files.metra;
   assert.strictEqual(rolloffCutoff(manifest, now, '2026-10-01'), chicagoMidnight('2026-10-05'));
-  delete manifest['2026-10-05'];
-  assert.strictEqual(rolloffCutoff(manifest, now, '2026-10-01'), chicagoMidnight('2026-10-05'));
-});
-
-test('rolloffCutoff deletes nothing before an empty manifest’s start date', () => {
-  const now = Date.UTC(2026, 9, 31, 17);
   assert.strictEqual(rolloffCutoff({}, now, '2026-10-01'), chicagoMidnight('2026-10-01'));
 });
 
-test('buildIndex lists only uploaded days, newest first', () => {
-  const index = buildIndex(
-    {
-      '2026-10-02': { uploaded: true, files: { bus: { rows: 2 } } },
-      '2026-10-01': { uploaded: true, files: { bus: { rows: 1 } } },
-      '2026-10-03': { uploaded: false, files: {} },
-    },
-    0,
-  );
+test('buildIndex is Parquet-only, complete, newest first and explicitly versioned', () => {
+  const manifest = newManifest();
+  manifest.days['2026-10-01'] = entry('2026-10-01');
+  manifest.days['2026-10-02'] = entry('2026-10-02');
+  manifest.days['2026-10-03'] = { verified: false, files: {} };
+  const index = buildIndex(manifest, 0);
   assert.deepStrictEqual(
     index.days.map((d) => d.date),
     ['2026-10-02', '2026-10-01'],
   );
-  assert.deepStrictEqual(index.coverage, { first: '2026-10-01', latest: '2026-10-02', days: 2 });
-});
-
-test('buildIndex shape and key order', () => {
-  const files = {
-    bus: { path: 'positions/bus/2026/10/2026-10-31.ndjson.gz', rows: 5, bytes: 9, sha256: 'a' },
-    train: { path: 'positions/train/2026/10/2026-10-31.ndjson.gz', rows: 3, bytes: 8, sha256: 'b' },
-    metra: { path: 'positions/metra/2026/10/2026-10-31.ndjson.gz', rows: 1, bytes: 7, sha256: 'c' },
-  };
-  const index = buildIndex({ '2026-10-31': { uploaded: true, files } }, 0);
-  assert.deepStrictEqual(Object.keys(index), [
-    'title',
-    'generated_at',
-    'timezone',
-    'days_are',
-    'format',
-    'base_url',
-    'coverage',
-    'feeds',
-    'known_gaps',
-    'days',
-  ]);
-  assert.deepStrictEqual(index.days[0], {
-    date: '2026-10-31',
-    weekday: 'Sat',
-    rows: { bus: 5, train: 3, metra: 1 },
-    files,
-  });
-  assert.deepStrictEqual(Object.keys(index.feeds), KINDS);
-  assert.deepStrictEqual(index.feeds.bus.fields.ts, {
-    type: 'integer',
-    unit: 'epoch ms',
-    nullable: false,
-    description: 'Poll time',
-  });
+  assert.strictEqual(index.manifest_version, 2);
+  assert.strictEqual(index.schema_version, 2);
+  assert.strictEqual(index.format, 'parquet');
+  assert.deepStrictEqual(index.sort_order, ['route', 'vehicle_id', 'ts']);
+  assert.deepStrictEqual(index.feeds.bus.fields.ts, SCHEMA.bus.fields.ts);
+  assert.equal(index.feeds.train.fields.geometry, undefined);
   assert.strictEqual(index.feeds.train.fields.approaching.since, '2026-11-01');
-  for (const feed of Object.values(index.feeds)) {
-    for (const field of Object.values(feed.fields)) {
-      assert.ok(['integer', 'number', 'string'].includes(field.type));
-      assert.strictEqual(typeof field.nullable, 'boolean');
-      assert.ok(field.description);
-    }
-  }
-  assert.ok(index.known_gaps.some((g) => g.start.startsWith('2026-10-12') && g.feeds[0] === 'bus'));
+  assert.throws(
+    () => buildIndex(manifest, 0, { days: [{ date: '2026-09-30', files: {} }] }),
+    /drop published/,
+  );
+  const bad = entry('2026-10-01');
+  bad.files.bus.format = 'ndjson';
+  assert.strictEqual(verifiedDay(bad), false);
 });
 
 test('toRecord emits fields in schema order', () => {
   const rec = toRecord({ kind: 'metra', ts: 1, route: 'ME', vehicle_id: '1', trip_id: 't' });
   assert.deepStrictEqual(Object.keys(rec), Object.keys(SCHEMA.metra.fields));
-});
-
-test('buildIndex migrates an old-format index without losing days', () => {
-  const oldFiles = (rows) => ({ bus: { path: 'x', rows, bytes: 1, sha256: `h${rows}` } });
-  const previous = {
-    generated_at: '2026-11-01T08:40:01.646Z',
-    timezone: 'America/Chicago',
-    format: 'gzipped NDJSON, one JSON object per line, ordered by ts',
-    schema: { bus: { ts: 'Poll time, epoch ms' } },
-    days: [
-      { date: '2026-09-28', files: oldFiles(1) },
-      { date: '2026-09-29', files: oldFiles(2) },
-    ],
-  };
-  const manifest = {
-    '2026-09-29': { uploaded: true, files: oldFiles(20) },
-    '2026-09-30': { uploaded: true, files: oldFiles(3) },
-  };
-  const index = buildIndex(manifest, 0, previous);
-  assert.deepStrictEqual(
-    index.days.map((d) => [d.date, d.files.bus.sha256]),
-    [
-      ['2026-09-30', 'h3'],
-      ['2026-09-29', 'h20'],
-      ['2026-09-28', 'h1'],
-    ],
-  );
-  assert.strictEqual(index.schema, undefined);
-  assert.deepStrictEqual(buildIndex({}, 0, index).days, index.days);
 });
 
 test('field descriptions leave unit and availability to their own keys', () => {

@@ -1,22 +1,27 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const Path = require('node:path');
-const Fs = require('node:fs');
 const { resolveStopOnRoute, normalizeStopName } = require('../../src/bus/patterns');
 
-// Load cached pattern fixtures directly off disk to keep tests independent of
-// loadPattern's 24h TTL — otherwise stale fixtures trigger a live API fetch
-// and the test fails with no network.
-const PATTERN_DIR = Path.join(__dirname, '..', '..', 'data', 'patterns');
-const loadPattern = async (pid) =>
-  JSON.parse(Fs.readFileSync(Path.join(PATTERN_DIR, `${pid}.json`), 'utf8'));
+// Minimal synthetic patterns exercise stop matching without an untracked API
+// cache or API credentials. Distances are fixture values, not schedule data.
+const patterns = {
+  7111: {
+    points: [
+      { type: 'W', lat: 41.8, lon: -87.8 },
+      { type: 'S', stopName: 'Archer & Nottingham', pdist: 1234 },
+      { type: 'S', stopName: 'Archer & Narragansett', pdist: 2500 },
+    ],
+  },
+  7120: { points: [{ type: 'S', stopName: 'Archer & Cicero', pdist: 1000 }] },
+};
+const loadPattern = async (pid) => patterns[pid];
 
 test('normalizeStopName lowercases + collapses whitespace', () => {
   assert.equal(normalizeStopName('Archer & Nottingham'), 'archer & nottingham');
   assert.equal(normalizeStopName('  Belmont,  Halsted  '), 'belmont halsted');
 });
 
-test('resolveStopOnRoute: exact match resolves on real cached pattern', async () => {
+test('resolveStopOnRoute: exact match resolves on a pattern', async () => {
   const hit = await resolveStopOnRoute({
     pids: ['7111'],
     loadPattern,
@@ -30,7 +35,7 @@ test('resolveStopOnRoute: exact match resolves on real cached pattern', async ()
 });
 
 test('resolveStopOnRoute: junction "/" form matches "&" stop name', async () => {
-  // Headlines often write "Belmont/Halsted"; cached pattern has "& "
+  // Headlines often write "Belmont/Halsted"; the pattern has "& ".
   const hit = await resolveStopOnRoute({
     pids: ['7111'],
     loadPattern,

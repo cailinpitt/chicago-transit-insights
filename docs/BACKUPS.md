@@ -9,7 +9,7 @@ off-box to **Cloudflare R2** daily.
 - `scripts/restore-db.sh` — pull a snapshot back down and verify it.
 
 Vehicle positions (`observations`) are **not** in the backup. Finished days
-are archived by `bin/export-positions.js` to `archive/positions/` and to the
+are archived as Parquet by `bin/export-positions.js` to `archive/positions/` and to the
 public data bucket, which doubles as their off-box copy (`docs/POSITIONS.md`).
 A restored DB starts with an empty `observations` table, so it loses up to 14
 days of hot-window positions. The archived days are unaffected; the

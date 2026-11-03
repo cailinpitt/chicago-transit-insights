@@ -1,5 +1,5 @@
-// Daily vehicle-position archive: one gzipped NDJSON file per (kind, Chicago
-// service day), kept on the server and published to the public data bucket.
+// Daily vehicle-position archive: one sorted Parquet file per (kind, Chicago
+// calendar day, revision), kept locally and published to the public data bucket.
 // The live observations table only holds a short hot window; see
 // docs/POSITIONS.md.
 
@@ -8,6 +8,9 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const START_DATE = '2026-09-28';
 const HOT_WINDOW_DAYS = 14;
 const KINDS = ['bus', 'train', 'metra'];
+const MANIFEST_VERSION = 2;
+const SCHEMA_VERSION = 2;
+const SORT_ORDER = ['route', 'vehicle_id', 'ts'];
 
 const BASE_URL = 'https://data.chicagotransitalerts.app/';
 
@@ -44,7 +47,7 @@ const SCHEMA = {
         unit: 'seconds',
         nullable: true,
       }),
-      sched_start_date: f('string', 'Scheduled trip service date (YYYYMMDD)', { nullable: true }),
+      sched_start_date: f('string', 'Scheduled trip service date (YYYY-MM-DD)', { nullable: true }),
     },
   },
   train: {
@@ -114,7 +117,7 @@ function metraVehicleTsMs(v) {
 function toRecord(row) {
   const out = {};
   for (const field of Object.keys(SCHEMA[row.kind].fields)) {
-    out[field] = field === 'pid' ? row.direction : row[field];
+    out[field] = (field === 'pid' ? row.direction : row[field]) ?? null;
   }
   if (row.kind === 'metra' && 'vehicle_ts' in out)
     out.vehicle_ts = metraVehicleTsMs(out.vehicle_ts);
@@ -165,19 +168,51 @@ function completedDays(now = Date.now(), startDate = START_DATE) {
   return days;
 }
 
-function filePath(kind, date) {
-  return `${kind}/${date.slice(0, 4)}/${date.slice(5, 7)}/${date}.ndjson.gz`;
+function filePath(kind, date, sha256) {
+  if (!KINDS.includes(kind) || !/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^[a-f0-9]{64}$/.test(sha256))
+    throw new Error('Invalid archive kind, date or SHA-256');
+  return `${kind}/${date.slice(0, 4)}/${date.slice(5, 7)}/${date}.${sha256}.parquet`;
+}
+
+function newManifest() {
+  return { manifest_version: MANIFEST_VERSION, days: {}, published: null };
+}
+
+function verifiedDay(entry) {
+  return (
+    entry?.verified === true &&
+    KINDS.every((kind) => {
+      const file = entry.files?.[kind];
+      return (
+        file?.format === 'parquet' &&
+        file.schema_version === SCHEMA_VERSION &&
+        /^[a-f0-9]{64}$/.test(file.sha256) &&
+        file.data_revision === file.sha256 &&
+        file.path?.endsWith(`.${file.sha256}.parquet`) &&
+        Number.isSafeInteger(file.rows) &&
+        file.rows >= 0 &&
+        Number.isSafeInteger(file.bytes) &&
+        file.bytes > 0
+      );
+    })
+  );
 }
 
 // Rows older than the hot window may be deleted, but never past the first day
-// that hasn't been archived and uploaded yet.
+// that hasn't been verified AND committed in the published Parquet manifest.
 function rolloffCutoff(manifest, now = Date.now(), startDate = START_DATE) {
   const today = chicagoDate(now);
   let cutoff = chicagoMidnight(addDays(today, -HOT_WINDOW_DAYS));
   for (const date of completedDays(now, startDate)) {
     const { start } = dayBounds(date);
     if (start >= cutoff) break;
-    if (!manifest[date]?.uploaded) {
+    const entry = manifest.days?.[date];
+    if (
+      manifest.manifest_version !== MANIFEST_VERSION ||
+      !manifest.published ||
+      !entry?.committed ||
+      !verifiedDay(entry)
+    ) {
       cutoff = start;
       break;
     }
@@ -192,8 +227,7 @@ function weekday(date) {
   });
 }
 
-// Accepts both the current index and the pre-2026-11 one ({ schema, days }
-// oldest first); either way only `date` and `files` are carried over.
+// Also used to inventory the old index during the one-time migration.
 function indexDays(previous) {
   const out = {};
   for (const day of previous?.days || []) {
@@ -202,12 +236,14 @@ function indexDays(previous) {
   return out;
 }
 
-// Days come from the manifest, plus any listed in the previous index that the
-// manifest lacks, so a rebuild never drops a published day.
+// Never silently drop published history or mix NDJSON and Parquet in an index.
 function buildIndex(manifest, generatedAt = Date.now(), previous = null) {
-  const byDate = indexDays(previous);
-  for (const [date, entry] of Object.entries(manifest)) {
-    if (entry.uploaded) byDate[date] = entry.files;
+  const byDate = {};
+  for (const [date, entry] of Object.entries(manifest.days)) {
+    if (verifiedDay(entry)) byDate[date] = entry.files;
+  }
+  for (const date of Object.keys(indexDays(previous))) {
+    if (!byDate[date]) throw new Error(`Refusing to drop published day ${date}`);
   }
   const dates = Object.keys(byDate).sort().reverse();
   const days = dates.map((date) => {
@@ -217,11 +253,16 @@ function buildIndex(manifest, generatedAt = Date.now(), previous = null) {
     return { date, weekday: weekday(date), rows, files };
   });
   return {
+    manifest_version: MANIFEST_VERSION,
+    schema_version: SCHEMA_VERSION,
     title: 'CTA vehicle positions archive',
     generated_at: new Date(generatedAt).toISOString(),
     timezone: 'America/Chicago',
     days_are: 'Local calendar days in `timezone`, midnight to midnight',
-    format: 'gzipped NDJSON, one JSON object per line, ordered by ts',
+    format: 'parquet',
+    compression: 'zstd',
+    sort_order: SORT_ORDER,
+    previous_manifest: manifest.published?.path ?? null,
     base_url: BASE_URL,
     coverage: { first: dates.at(-1) ?? null, latest: dates[0] ?? null, days: dates.length },
     feeds: SCHEMA,
@@ -235,6 +276,9 @@ module.exports = {
   START_DATE,
   HOT_WINDOW_DAYS,
   KINDS,
+  MANIFEST_VERSION,
+  SCHEMA_VERSION,
+  SORT_ORDER,
   SCHEMA,
   BASE_URL,
   KNOWN_GAPS,
@@ -247,6 +291,8 @@ module.exports = {
   dayBounds,
   completedDays,
   filePath,
+  newManifest,
+  verifiedDay,
   rolloffCutoff,
   indexDays,
   buildIndex,

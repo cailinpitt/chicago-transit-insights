@@ -142,9 +142,10 @@ R=/path/to/cta-insights/bin/cron-run.sh
 # same r2web remote as the backups/data push — no new creds. See docs/REPLAY.md.
 9-59/15 *  *  *  *   $R export-event-tracks bin/export-event-tracks.js
 # export-positions: archive each finished Chicago day of vehicle positions to
-# archive/positions/ as gzipped NDJSON, publish it to the same bucket under
-# positions/, then trim observations to the 14-day hot window (only days that
-# were uploaded). Runs before the 04:17 backup. See docs/POSITIONS.md.
+# archive/positions/ as sorted Parquet, publish it to the same bucket under
+# positions/, then trim observations to the 14-day hot window (only verified,
+# committed days). Migrate before enabling; runs before the 04:17 backup.
+# See docs/POSITIONS.md.
 40      2  *  *  *   $R export-positions bin/export-positions.js
 
 # --- Backups ---

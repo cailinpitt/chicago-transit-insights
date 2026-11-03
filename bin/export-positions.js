@@ -1,33 +1,30 @@
 #!/usr/bin/env node
-// Archive each finished Chicago day of vehicle positions to gzipped NDJSON,
-// keep it on the server, publish it to the public data bucket under
-// positions/, then trim the observations table back to its hot window.
-//
-// Rows are only deleted for days that are archived locally AND uploaded, so a
-// failed upload just leaves them in the DB for the next run. --dry-run writes
-// files to tmp/positions-dry-run and uploads/deletes nothing. See
-// docs/POSITIONS.md.
+// Direct SQLite -> sorted Parquet -> verified object -> committed manifest.
+// Only committed days permit observations to leave the 14-day hot window.
 require('../src/shared/env');
-
-const Fs = require('node:fs');
 const Path = require('node:path');
-const Zlib = require('node:zlib');
-const Crypto = require('node:crypto');
-const { once } = require('node:events');
-const { execFileSync } = require('node:child_process');
 const Database = require('better-sqlite3');
-const argv = require('minimist')(process.argv.slice(2));
-
 const { runBin } = require('../src/shared/runBin');
 const {
-  KINDS,
-  toRecord,
-  dayBounds,
   completedDays,
-  filePath,
   rolloffCutoff,
-  buildIndex,
+  verifiedDay,
+  chicagoDate,
+  addDays,
+  HOT_WINDOW_DAYS,
 } = require('../src/shared/positionsArchive');
+const { exportDay } = require('../src/shared/positionsParquet');
+const {
+  readJson,
+  verifyLocal,
+  writeJson,
+  loadManifest,
+  localPath,
+  rcloneStore,
+  uploadDay,
+  publishIndex,
+  withLock,
+} = require('../src/shared/positionsPublication');
 
 const REPO = Path.join(__dirname, '..');
 const DB_PATH = process.env.HISTORY_DB_PATH || Path.join(REPO, 'state', 'history.sqlite');
@@ -37,151 +34,138 @@ const ARCHIVE_DIR = process.env.POSITIONS_ARCHIVE_DIR || Path.join(REPO, 'archiv
 const REMOTE = process.env.RCLONE_REMOTE || 'r2web:cta-alert-history-data';
 const DELETE_BATCH_MS = 60 * 60 * 1000;
 
-function loadManifest() {
-  try {
-    return JSON.parse(Fs.readFileSync(MANIFEST_PATH, 'utf8'));
-  } catch (_) {
-    return {};
-  }
-}
-
-function saveManifest(manifest) {
-  const tmp = `${MANIFEST_PATH}.tmp`;
-  Fs.writeFileSync(tmp, `${JSON.stringify(manifest, null, 2)}\n`);
-  Fs.renameSync(tmp, MANIFEST_PATH);
-}
-
-function sha256(path) {
-  return Crypto.createHash('sha256').update(Fs.readFileSync(path)).digest('hex');
-}
-
-// One ts-ordered pass over the day, fanned out to a gzip stream per kind.
-// Written to .partial and renamed so a crash never leaves a truncated file
-// under the final name.
-async function exportDay(db, date, outDir) {
-  const { start, end } = dayBounds(date);
-  const writers = {};
-  for (const kind of KINDS) {
-    const finalPath = Path.join(outDir, filePath(kind, date));
-    Fs.mkdirSync(Path.dirname(finalPath), { recursive: true });
-    const gzip = Zlib.createGzip({ level: 9 });
-    const file = Fs.createWriteStream(`${finalPath}.partial`);
-    gzip.pipe(file);
-    writers[kind] = { finalPath, gzip, file, rows: 0 };
-  }
-
-  const rows = db
-    .prepare('SELECT * FROM observations WHERE ts >= ? AND ts < ? ORDER BY ts')
-    .iterate(start, end);
-  for (const row of rows) {
-    const w = writers[row.kind];
-    if (!w) continue;
-    w.rows++;
-    if (!w.gzip.write(`${JSON.stringify(toRecord(row))}\n`)) await once(w.gzip, 'drain');
-  }
-
-  const files = {};
-  for (const kind of KINDS) {
-    const w = writers[kind];
-    w.gzip.end();
-    await once(w.file, 'finish');
-    Fs.renameSync(`${w.finalPath}.partial`, w.finalPath);
-    files[kind] = {
-      path: `positions/${filePath(kind, date)}`,
-      rows: w.rows,
-      bytes: Fs.statSync(w.finalPath).size,
-      sha256: sha256(w.finalPath),
-    };
-  }
-  return files;
-}
-
-// Served as a plain .gz download (no Content-Encoding) so clients save the
-// compressed file as-is. Finished days never change, so cache them hard.
-function upload(localPath, remotePath, contentType, maxAge) {
-  execFileSync(
-    'rclone',
-    [
-      'copyto',
-      localPath,
-      `${REMOTE}/${remotePath}`,
-      '--s3-no-check-bucket',
-      '--header-upload',
-      `Content-Type: ${contentType}`,
-      '--header-upload',
-      `Cache-Control: public, max-age=${maxAge}`,
-    ],
-    { stdio: 'pipe' },
-  );
-}
-
-// The previous index (old or new format) is merged in so no published day is lost.
-function publishIndex(manifest, now = Date.now()) {
-  Fs.mkdirSync(ARCHIVE_DIR, { recursive: true });
-  const indexPath = Path.join(ARCHIVE_DIR, 'index.json');
-  let previous = null;
-  try {
-    previous = JSON.parse(Fs.readFileSync(indexPath, 'utf8'));
-  } catch (_) {}
-  Fs.writeFileSync(indexPath, `${JSON.stringify(buildIndex(manifest, now, previous), null, 2)}\n`);
-  upload(indexPath, 'positions/index.json', 'application/json', 300);
-}
-
 function deleteBefore(db, cutoff) {
   const oldest = db.prepare('SELECT MIN(ts) AS ts FROM observations').get().ts;
   if (oldest == null || oldest >= cutoff) return 0;
   const del = db.prepare('DELETE FROM observations WHERE ts >= ? AND ts < ?');
   let deleted = 0;
-  for (let from = oldest; from < cutoff; from += DELETE_BATCH_MS) {
+  for (let from = oldest; from < cutoff; from += DELETE_BATCH_MS)
     deleted += del.run(from, Math.min(from + DELETE_BATCH_MS, cutoff)).changes;
-  }
   return deleted;
 }
 
-async function main() {
-  const dryRun = !!argv['dry-run'];
-  const now = Date.now();
-  const manifest = loadManifest();
-  const outDir = dryRun ? Path.join(REPO, 'tmp', 'positions-dry-run') : ARCHIVE_DIR;
-  const readDb = new Database(DB_PATH, { readonly: true });
-
-  let days = completedDays(now).filter((d) => !manifest[d]?.uploaded);
-  if (argv.limit) days = days.slice(0, Number(argv.limit));
-
-  for (const date of days) {
-    const t0 = Date.now();
-    const files = manifest[date]?.files || (await exportDay(readDb, date, outDir));
-    const summary = KINDS.map((k) => `${k}=${files[k].rows}`).join(' ');
-    console.log(`${date}: ${summary} (${((Date.now() - t0) / 1000).toFixed(1)}s)`);
-    if (dryRun) continue;
-
-    manifest[date] = { files, uploaded: false };
-    saveManifest(manifest);
-    for (const kind of KINDS) {
-      upload(Path.join(outDir, filePath(kind, date)), files[kind].path, 'application/gzip', 86400);
+async function runExport({
+  dbPath = DB_PATH,
+  manifestPath = MANIFEST_PATH,
+  outDir = ARCHIVE_DIR,
+  archiveDir = outDir,
+  store = rcloneStore(REMOTE),
+  now = Date.now(),
+  startDate,
+  dryRun = false,
+  limit,
+  republish = false,
+  reexportDate,
+} = {}) {
+  const manifest = loadManifest(manifestPath);
+  if (manifest.published)
+    await verifyLocal(localPath(archiveDir, manifest.published.path), manifest.published);
+  const previous = manifest.published
+    ? readJson(localPath(archiveDir, manifest.published.path))
+    : null;
+  for (const day of previous?.days || []) {
+    const entry = manifest.days[day.date];
+    if (
+      !entry ||
+      (entry.committed &&
+        Object.entries(day.files).some(
+          ([kind, file]) => entry.files?.[kind]?.sha256 !== file.sha256,
+        ))
+    )
+      throw new Error(`Published day ${day.date} disagrees with local state; restore the manifest`);
+  }
+  // A missing local manifest must never recreate pruned history as empty days.
+  const existingIndex = readJson(Path.join(archiveDir, 'index.json'), null);
+  if (
+    !manifest.published &&
+    existingIndex &&
+    (existingIndex.manifest_version !== 2 || !Object.keys(manifest.days).length)
+  )
+    throw new Error(
+      'Existing archive index without a committed Parquet manifest: migrate or restore state',
+    );
+  const save = (value) => writeJson(manifestPath, value);
+  const readDb = new Database(dbPath, { readonly: true });
+  try {
+    const completed = completedDays(now, startDate);
+    if (
+      reexportDate &&
+      (!completed.includes(reexportDate) ||
+        reexportDate < addDays(chicagoDate(now), -HOT_WINDOW_DAYS))
+    )
+      throw new Error(
+        '--reexport-date must be a completed day inside the retained SQLite hot window',
+      );
+    let days = reexportDate
+      ? [reexportDate]
+      : completed.filter((d) => !verifiedDay(manifest.days[d]));
+    if (limit !== undefined) {
+      if (!Number.isSafeInteger(limit) || limit < 1)
+        throw new Error('--limit must be a positive integer');
+      days = days.slice(0, limit);
     }
-    manifest[date].uploaded = true;
-    saveManifest(manifest);
+    for (const date of days) {
+      const oldEntry = manifest.days[date];
+      const files =
+        (!dryRun && !reexportDate && oldEntry?.files) || (await exportDay(readDb, date, outDir));
+      if (reexportDate && oldEntry) {
+        for (const [kind, file] of Object.entries(files)) {
+          const previousFile = previous?.days.find((day) => day.date === date)?.files[kind];
+          if (previousFile && file.sha256 !== previousFile.sha256)
+            file.replaces = { path: previousFile.path, sha256: previousFile.sha256 };
+        }
+      }
+      console.log(
+        `${date}: ${Object.entries(files)
+          .map(([k, f]) => `${k}=${f.rows}`)
+          .join(' ')}`,
+      );
+      if (dryRun) continue;
+      const entry = {
+        files,
+        verified: false,
+        committed: false,
+        ...(oldEntry?.sources && { sources: oldEntry.sources }),
+      };
+      manifest.days[date] = entry;
+      save(manifest);
+      await uploadDay(entry, outDir, store);
+      save(manifest);
+    }
+  } finally {
+    readDb.close();
   }
-  readDb.close();
-
-  const cutoff = rolloffCutoff(manifest, now);
-  if (dryRun) {
-    console.log(`dry run: would delete observations before ${new Date(cutoff).toISOString()}`);
-    return;
+  if (dryRun) return manifest;
+  if (republish || Object.values(manifest.days).some((d) => !d.committed))
+    await publishIndex(manifest, outDir, store, save, now, previous);
+  const cutoff = rolloffCutoff(manifest, now, startDate);
+  const db = new Database(dbPath);
+  try {
+    db.pragma(`busy_timeout = ${Number(process.env.SQLITE_BUSY_TIMEOUT_MS) || 30000}`);
+    console.log(
+      `rolloff: deleted ${deleteBefore(db, cutoff)} rows before ${new Date(cutoff).toISOString()}`,
+    );
+  } finally {
+    db.close();
   }
+  return manifest;
+}
 
-  if (days.length > 0 || argv['publish-index']) {
-    publishIndex(manifest, now);
-  }
-
-  const db = new Database(DB_PATH);
-  db.pragma(`busy_timeout = ${Number(process.env.SQLITE_BUSY_TIMEOUT_MS) || 30000}`);
-  const deleted = deleteBefore(db, cutoff);
-  db.close();
-  console.log(`rolloff: deleted ${deleted} rows before ${new Date(cutoff).toISOString()}`);
+async function main() {
+  const argv = require('minimist')(process.argv.slice(2));
+  const dryRun = !!argv['dry-run'];
+  const outDir = dryRun ? Path.join(REPO, 'tmp', 'positions-dry-run') : ARCHIVE_DIR;
+  await withLock(`${MANIFEST_PATH}.lock`, () =>
+    runExport({
+      dryRun,
+      outDir,
+      archiveDir: ARCHIVE_DIR,
+      limit: argv.limit === undefined ? undefined : Number(argv.limit),
+      republish: !!argv['publish-index'],
+      reexportDate: argv['reexport-date'],
+    }),
+  );
 }
 
 if (require.main === module) runBin(main);
-
-module.exports = { ARCHIVE_DIR, loadManifest, saveManifest, sha256, upload, publishIndex };
+module.exports = { runExport, deleteBefore, DB_PATH, MANIFEST_PATH, ARCHIVE_DIR, REMOTE };
