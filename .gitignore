@@ -19,3 +19,4 @@ research.md
 bugs.md
 debugging/config.sh
 *.sqlite
+cron/.locks/

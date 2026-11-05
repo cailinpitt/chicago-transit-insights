@@ -101,7 +101,7 @@ The bus bot tracks a subset of CTA routes — see `src/bus/routes.js`. The train
 
 Everything is designed to be driven by cron. There's no long-running process — each script does one detection or rollup and exits. The full schedule lives in [`cron/crontab.txt`](cron/crontab.txt). On a fresh server with no other cron jobs you can install it with `crontab cron/crontab.txt`. **On any server that already has unrelated cron jobs**, DO NOT use that destructive form — it replaces every job for the user. Instead, merge between the `# CTA-INSIGHTS-START` / `# CTA-INSIGHTS-END` markers; the file's header has a step-by-step procedure.
 
-Each line uses [`bin/cron-run.sh`](bin/cron-run.sh) — a small wrapper that handles `cd` to the repo root, timestamps each invocation, and redirects stdout/stderr to `cron/<log-name>-cron.log`. So a job entry is just:
+Each line uses [`bin/cron-run.sh`](bin/cron-run.sh) — a small wrapper that handles `cd` to the repo root, timestamps each invocation, and redirects stdout/stderr to `cron/<log-name>-cron.log`. It also holds a per-job `flock` (`cron/.locks/<log-name>.lock`): if the previous run of a job is still going, the new tick logs `skipped: previous … run still in progress` and exits 0 instead of stacking another process. Overlapping runs once piled up behind a stuck DB lock until the server ran out of memory. So a job entry is just:
 
 ```cron
 4-59/15 * * * * /home/you/cta-insights/bin/cron-run.sh train-bunching bin/train/bunching.js

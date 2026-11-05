@@ -11,6 +11,16 @@ shift 2
 LOG=cron/$NAME-cron.log
 printf "\n\n=== $(date) $NAME ===\n" >> "$LOG"
 
+# One instance per job: if the previous run is still going (stuck on a DB lock,
+# a slow API, a long timelapse), skip this tick rather than stack another node
+# process on top of it.
+mkdir -p cron/.locks
+exec 9>"cron/.locks/$NAME.lock"
+if ! flock -n 9; then
+  echo "skipped: previous $NAME run still in progress" >> "$LOG"
+  exit 0
+fi
+
 # healthchecks.io monitoring (optional). Only the slugs in HC_MONITORED ping
 # (and thus auto-create a check); the curated set keeps us under the 20-check
 # free tier and is the committed source of truth for "what's watched" — edit it
@@ -38,7 +48,9 @@ hc_ping() {
 # still sends the completion ping instead of aborting the wrapper before it.
 hc_ping start
 set +e
-/usr/bin/node "$SCRIPT" "$@" >> "$LOG" 2>&1
+# 9>&- keeps the lock fd out of node, so an orphaned grandchild (chromium,
+# ffmpeg) can't hold the lock after the job exits.
+/usr/bin/node "$SCRIPT" "$@" >> "$LOG" 2>&1 9>&-
 rc=$?
 hc_ping "$rc"
 
