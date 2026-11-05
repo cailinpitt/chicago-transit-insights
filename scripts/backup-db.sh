@@ -1,7 +1,7 @@
 #!/bin/bash
 # Daily off-box backup of the cta-insights history DB to Cloudflare R2.
 #
-# Uses SQLite's online `.backup` (WAL-safe — produces a single consistent
+# Uses SQLite's `VACUUM INTO` (WAL-safe — produces a single consistent
 # file with the WAL merged in, without blocking the bots mid-write). The
 # observations table is dropped from the snapshot (positions are archived
 # separately by bin/export-positions.js, see docs/POSITIONS.md), then it is
@@ -33,11 +33,20 @@ if [ ! -f "$DB" ]; then
 fi
 
 mkdir -p "$WORKDIR"
-# Don't leave a multi-GB uncompressed snapshot behind if a step fails.
-trap 'rm -f "${WORKDIR}/${OUT}"' ERR
 
-# 1. Consistent online snapshot (merges the WAL; safe while writers run).
-sqlite3 "$DB" ".backup '${WORKDIR}/${OUT}'"
+exec 9>"${WORKDIR}/.backup.lock"
+if ! flock -n 9; then
+  echo "$(date -Is) ERROR: previous backup still running, skipping" >&2
+  exit 1
+fi
+
+# Don't leave a multi-GB uncompressed snapshot behind if a step fails.
+trap 'rm -f "${WORKDIR}/${OUT}" "${WORKDIR}/${OUT}-journal"' ERR
+
+# 1. Consistent online snapshot. VACUUM INTO reads in a single transaction, so
+#    under WAL it never blocks writers; `.backup` restarts on every concurrent
+#    write and never finished once write volume grew.
+timeout 2h sqlite3 "$DB" "VACUUM INTO '${WORKDIR}/${OUT}'"
 
 # 2. Drop vehicle positions from the snapshot only. The live DB is untouched,
 #    and history.js recreates the empty table on a restored copy.

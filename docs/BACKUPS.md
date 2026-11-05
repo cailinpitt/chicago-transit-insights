@@ -15,8 +15,13 @@ A restored DB starts with an empty `observations` table, so it loses up to 14
 days of hot-window positions. The archived days are unaffected; the
 detectors' 7-day lookbacks are thin for the first week after a restore.
 
-The snapshot is taken with SQLite's online `.backup`, which is WAL-safe and
-does not block the bots mid-write. A raw `cp` of the `.sqlite` file is **not**
+The snapshot is taken with `VACUUM INTO`, which reads the DB in a single
+transaction, so under WAL it does not block the bots mid-write. Don't switch
+back to the CLI's `.backup`: it copies in small steps and restarts whenever
+another process writes, so with the bots writing every minute it never finished
+and four stuck copies starved the box of memory (Nov 2026). The script holds a
+`flock` so a slow run can't overlap the next night's, and caps the snapshot at
+2h. A raw `cp` of the `.sqlite` file is **not**
 safe — it can capture a torn state while the `-wal` file holds uncommitted
 writes.
 
