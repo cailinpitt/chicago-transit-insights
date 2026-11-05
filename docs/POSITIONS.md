@@ -179,6 +179,10 @@ list is in the index as `known_gaps`; keep this table in sync with
 | 2026-10-22 | bus, train, metra | 15:37 to 15:48 | No polls recorded |
 | 2026-10-30 | bus, train, metra | 17:40 to 18:07 | No polls recorded |
 | 2026-11-03 | bus, train, metra | 15:28 to 15:29 | Dependency reinstall during deploy |
+| 2026-11-04 | bus, train, metra | 09:00 to midnight | Reduced polling: stuck DB backups caused lock contention that dropped some polls |
+| 2026-11-05 | bus, train, metra | 00:00 to 01:00 | Reduced polling: stuck DB backups caused lock contention that dropped some polls |
+| 2026-11-05 | bus, train, metra | 06:00 to 14:36 | Reduced polling: stuck DB backups caused lock contention that dropped some polls |
+| 2026-11-05 | bus, train, metra | 14:36 to 16:37 | Server ran out of memory and hung; no polls recorded |
 
 Metra has no rows overnight (roughly 01:00 to 04:30) because no trains are
 running; that isn't a gap.
