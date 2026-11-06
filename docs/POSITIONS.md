@@ -262,13 +262,39 @@ inputs from the configured bucket, checks original size/SHA-256/row count, strea
 conversion, and rejects unexpected fields. It preserves the old index until
 `--cutover`. Progress is saved in `<manifest path>.parquet-migration`; retries
 reuse validated outputs. A `<manifest path>.ndjson-backup` preserves the old
-metadata, while the new state's per-day `sources` ledger records input and destination checksums,
-validation and timestamp-normalization counts. Metadata backups are not parallel
-NDJSON archives.
+metadata, while the new state's per-day `sources` ledger records input and
+destination checksums, validation and timestamp-normalization counts. A corrupt
+or interrupted local source download is replaced from the object store on retry.
+Metadata backups are not parallel NDJSON archives.
 
 The matching legacy index is saved as `archive/positions/index.ndjson-backup.json`
 (under `POSITIONS_ARCHIVE_DIR` when overridden), including days found only in the
 published index. Keep both metadata backups through the cutover.
+
+### Rehearse the full archive locally
+
+The migration accepts a filesystem object store with the same download, upload,
+checksum verification, index publication and resume path as the R2 adapter. Copy
+the legacy `positions/` tree, including `index.json`, into a scratch directory.
+For example, on a machine with the production rclone remote configured:
+
+```sh
+rclone copy r2web:cta-alert-history-data/positions /tmp/positions-rehearsal/store/positions
+npm run migrate-positions -- \
+  --local-store /tmp/positions-rehearsal/store \
+  --archive-dir /tmp/positions-rehearsal/converted \
+  --manifest /tmp/positions-rehearsal/manifest.json
+```
+
+The local command can start with no legacy manifest; it inventories every day
+in the copied index. It verifies the source size and SHA-256, row count, Parquet
+round trip and stored replacement bytes. It writes a resumable staging ledger
+beside `--manifest`, leaving the copied `index.json` unchanged. To exercise the
+last publication step on this copy, rerun with `--cutover`; its new pointer and
+immutable manifest stay under `--local-store`. Run the command again to confirm
+the completed state resumes cleanly. Use separate directories for the store,
+converted files and manifest. The production command above still uses R2 and
+the operator's existing local manifest.
 
 Retirement verifies the published manifest and each Parquet replacement again
 before deleting the corresponding old `.ndjson.gz` object and local file. It is

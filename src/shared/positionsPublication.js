@@ -40,6 +40,11 @@ function localPath(outDir, remotePath) {
   return Path.join(outDir, remotePath.slice('positions/'.length));
 }
 
+function assertLegacyPath(path) {
+  if (!/^positions\/(bus|train|metra)\/\d{4}\/\d{2}\/\d{4}-\d{2}-\d{2}\.ndjson\.gz$/.test(path))
+    throw new Error(`Refusing to retire a non-legacy path: ${path}`);
+}
+
 async function verifyLocal(path, file) {
   if (Fs.statSync(path).size !== file.bytes || (await sha256(path)) !== file.sha256)
     throw new Error(`Local checksum/size mismatch: ${path}`);
@@ -103,8 +108,7 @@ function rcloneStore(remote) {
       execFileSync('rclone', ['copyto', target(path), local], { stdio: 'pipe' });
     },
     async remove(path) {
-      if (!/^positions\/(bus|train|metra)\/\d{4}\/\d{2}\/\d{4}-\d{2}-\d{2}\.ndjson\.gz$/.test(path))
-        throw new Error(`Refusing to retire a non-legacy path: ${path}`);
+      assertLegacyPath(path);
       // Exact root-anchored filter; no matches is success on a crash/retry.
       execFileSync(
         'rclone',
@@ -118,6 +122,34 @@ function rcloneStore(remote) {
         ],
         { stdio: 'pipe' },
       );
+    },
+  };
+}
+
+// The local adapter follows the same object-store contract as R2. It lets an
+// operator rehearse the complete migration against a downloaded archive, with
+// the publication pointer confined to a local directory.
+function fileStore(root) {
+  const pathFor = (path) => localPath(Path.join(root, 'positions'), path);
+  return {
+    async upload(local, path) {
+      const target = pathFor(path);
+      Fs.mkdirSync(Path.dirname(target), { recursive: true });
+      Fs.copyFileSync(local, target);
+    },
+    async verify(path, file) {
+      await verifyLocal(pathFor(path), file);
+    },
+    async readJson(path) {
+      return readJson(pathFor(path));
+    },
+    async download(path, local) {
+      Fs.mkdirSync(Path.dirname(local), { recursive: true });
+      Fs.copyFileSync(pathFor(path), local);
+    },
+    async remove(path) {
+      assertLegacyPath(path);
+      Fs.rmSync(pathFor(path), { force: true });
     },
   };
 }
@@ -185,6 +217,7 @@ module.exports = {
   localPath,
   verifyLocal,
   rcloneStore,
+  fileStore,
   uploadDay,
   publishIndex,
   withLock,
